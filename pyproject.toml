@@ -1,0 +1,47 @@
+[project]
+name = "introspection"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "huggingface-hub>=0.36.0",
+    "torch>=2.9.0",
+    "transformers>=4.57.1",
+]
+
+
+[build-system]
+requires = ["uv_build>=0.8.12,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.32.1",
+    "pdbpp>=0.11.7",
+    "ruff>=0.14.3",
+]
+
+[tool.basedpyright]
+ignore = ["**/*.ipynb"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "strict"
+useLibraryCodeForTypes = true
+reportMissingImports = "error"
+reportAny = false # any is worth the convenience sometimes
+reportExplicitAny = false
+reportPrivateUsage = false # worth it for testing private functions
+allowedUntypedLibraries = ["datasets", "tqdm", "statsmodels", "timeout_decorator", "transformers"]
+
+executionEnvironments = [
+  { root = "tests", reportPrivateUsage = false, reportMissingTypeStubs = false },
+]
+
+[tool.ruff]
+exclude = ["**/*.ipynb"]
+lint.ignore = [
+]
+
+[tool.uv.build-backend]
+module-root = "src"
