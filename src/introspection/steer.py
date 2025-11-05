@@ -444,23 +444,26 @@ def parse_args() -> ExperimentArgs:
     )
     parser.add_argument(
         "--concept",
-        action="append",
+        nargs="+",
         dest="concepts",
-        help="Concept(s) to evaluate. Provide multiple times to test several. Defaults to all.",
+        metavar="CONCEPT",
+        help="Concept(s) to evaluate. Provide one or more values after the flag. Defaults to all.",
     )
     parser.add_argument(
         "--layer",
-        action="append",
+        nargs="+",
         dest="layers",
         type=int,
-        help="Restrict interventions to specific zero-based layer indices. Repeat for multiple layers.",
+        metavar="LAYER",
+        help="Restrict interventions to specific zero-based layer indices.",
     )
     parser.add_argument(
         "--strength",
-        action="append",
+        nargs="+",
         dest="strengths",
         type=float,
-        help="Scaling factor for the steering vectors. Repeat to sweep multiple strengths.",
+        metavar="STRENGTH",
+        help="Scaling factor for the steering vectors.",
     )
     parser.add_argument(
         "--trials",
@@ -476,10 +479,11 @@ def parse_args() -> ExperimentArgs:
     )
     parser.add_argument(
         "--temperature",
-        action="append",
+        nargs="+",
         dest="temperatures",
         type=float,
-        help="Sampling temperature(s) for generation. Repeat to sweep multiple values.",
+        metavar="TEMP",
+        help="Sampling temperature(s) for generation.",
     )
     parser.add_argument(
         "--top-p",
