@@ -115,6 +115,27 @@ def compute_steering_vectors(
     return steering
 
 
+def validate_steering_vectors(steering: dict[int, dict[str, torch.Tensor]]) -> None:
+    issues: list[str] = []
+    for layer_idx, concept_map in steering.items():
+        for concept, vector in concept_map.items():
+            if vector.isnan().any().item():
+                issues.append(
+                    f"Layer {layer_idx} concept '{concept}' contains NaN values."
+                )
+            if torch.isinf(vector).any().item():
+                issues.append(
+                    f"Layer {layer_idx} concept '{concept}' contains Inf values."
+                )
+    if issues:
+        preview = "\n".join(issues[:5])
+        suffix = "" if len(issues) <= 5 else f"\n... {len(issues) - 5} more entries."
+        raise ValueError(
+            "Steering vectors contain invalid values and will not be saved:"
+            f"\n{preview}{suffix}"
+        )
+
+
 def run_experiment(
     model_name: str,
     device: str | None,
@@ -153,6 +174,8 @@ def run_experiment(
         concepts,
         baseline_means,
     )
+
+    validate_steering_vectors(steering)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(steering, output_path)
