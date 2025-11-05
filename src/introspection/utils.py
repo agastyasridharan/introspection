@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import torch
+from torch import cuda as torch_cuda
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -31,9 +32,13 @@ def load_model(
     resolved_device = str(resolved_device)
     resolved_dtype = dtype
     if resolved_dtype is None:
-        resolved_dtype = (
-            torch.float16 if resolved_device.startswith("cuda") else torch.float32
-        )
+        if resolved_device.startswith("cuda") and torch_cuda.is_available():
+            if torch_cuda.is_bf16_supported():
+                resolved_dtype = torch.bfloat16
+            else:
+                resolved_dtype = torch.float16
+        else:
+            resolved_dtype = torch.float32
 
     tokenizer = cast(
         PreTrainedTokenizerBase,
@@ -48,11 +53,10 @@ def load_model(
             model_name,
             trust_remote_code=True,
             dtype=resolved_dtype,
-            device_map=None,
+            device_map="auto",
         ),  # pyright: ignore[reportUnknownMemberType]
     )
-    print("Done")
-    model.to(device=resolved_device)  # pyright: ignore[reportCallIssue, reportUnknownMemberType]
+    # model.to(device=resolved_device)  # pyright: ignore[reportCallIssue, reportUnknownMemberType]
     _ = model.eval()
 
     if set_pad_token_to_eos:
