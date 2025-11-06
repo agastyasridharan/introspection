@@ -22,7 +22,7 @@ def resolve_torch_dtype(name: str | None) -> torch.dtype | None:
 
 def load_model(
     model_name: str,
-    device: str | None,
+    device: torch.device | None,
     dtype: torch.dtype | None,
     *,
     disable_cache: bool = False,
@@ -56,7 +56,6 @@ def load_model(
             device_map="auto",
         ),  # pyright: ignore[reportUnknownMemberType]
     )
-    # model.to(device=resolved_device)  # pyright: ignore[reportCallIssue, reportUnknownMemberType]
     _ = model.eval()
 
     if set_pad_token_to_eos:
@@ -73,6 +72,3 @@ def load_model(
         model.config.use_cache = False
 
     return tokenizer, model, resolved_device
-
-
-load_model = load_model

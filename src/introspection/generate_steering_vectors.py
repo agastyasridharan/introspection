@@ -138,7 +138,7 @@ def validate_steering_vectors(steering: dict[int, dict[str, torch.Tensor]]) -> N
 
 def run_experiment(
     model_name: str,
-    device: str | None,
+    device: torch.device | None,
     dtype_name: str | None,
     output_path: Path,
     concept_count: int,
@@ -245,7 +245,7 @@ def main():
     args = parse_args()
     run_experiment(
         model_name=args.model_name,
-        device=args.device,
+        device=torch.device(args.device) if args.device else None,
         dtype_name=args.dtype_name,
         output_path=args.output_path,
         concept_count=args.concept_count,

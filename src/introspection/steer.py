@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Sequence, TextIO, cast
 
 import torch
 import torch.nn as nn
@@ -36,13 +37,14 @@ TRIAL_MARKER = "Trial 1"
 @dataclass
 class ExperimentArgs:
     model_name: str
-    device: str | None
+    device: torch.device | None
     dtype_name: str | None
     steering_path: Path
     concepts: list[str] | None
     layers: list[int] | None
     strengths: list[float]
     combine_layers: bool
+    jsonl_path: Path | None
     temperatures: list[float]
     top_p: float
     top_k: int
@@ -60,6 +62,44 @@ class PromptSetup:
     attention_mask: torch.Tensor
     formatted_prompt: str
     injection_index: int
+
+
+def write_jsonl_record(handle: TextIO, data: dict[str, Any]) -> None:
+    encoded = json.dumps(data, ensure_ascii=False)
+    handle.write(encoded)
+    handle.write("\n")
+    handle.flush()
+
+
+def build_trial_record(
+    *,
+    args: ExperimentArgs,
+    concept: str,
+    layers: list[int],
+    strength: float,
+    temperature: float,
+    trial: int,
+    trial_seed: int,
+    control: str,
+    intervention: str,
+) -> dict[str, Any]:
+    return {
+        "model_name": args.model_name,
+        "concept": concept,
+        "layers": layers,
+        "strength": strength,
+        "temperature": temperature,
+        "top_p": args.top_p,
+        "top_k": args.top_k,
+        "min_p": args.min_p,
+        "do_sample": args.do_sample,
+        "trial": trial,
+        "seed": trial_seed,
+        "max_new_tokens": args.max_new_tokens,
+        "control": control,
+        "intervention": intervention,
+        "steering_path": str(args.steering_path),
+    }
 
 
 class LayerSteeringHook:
@@ -105,7 +145,12 @@ class LayerSteeringHook:
             others = None
 
         seq_len = hidden.shape[1]
-        start = max(self.injection_index, self.last_seq_len)
+        if seq_len == 1:
+            # Decode step with cache: only the new token is present—inject it.
+            start = 0
+        else:
+            # Prefill: inject from the marker onward.
+            start = min(self.injection_index, seq_len)
         should_adjust = start < seq_len
         before_slice = None
         if should_adjust and self.debug_residual and not self._validation_done:
@@ -191,7 +236,7 @@ def compute_injection_index(
 
 def prepare_prompt(
     tokenizer: PreTrainedTokenizerBase,
-    device: str,
+    device: torch.device,
 ) -> PromptSetup:
     formatted_prompt = tokenizer.apply_chat_template(
         PROMPT_MESSAGES,
@@ -296,18 +341,6 @@ def remove_hooks(hooks: list[LayerSteeringHook]) -> None:
         hook.remove()
 
 
-def resolve_optional_token_id(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, list):
-        if not value:
-            return None
-        return resolve_optional_token_id(value[0])
-    raise TypeError("Expected token id to be an integer or list of integers.")
-
-
 def set_random_seed(seed: int) -> None:
     random.seed(seed)
     _ = torch.manual_seed(seed)  # pyright: ignore[reportUnknownMemberType]
@@ -334,8 +367,8 @@ def generate_response(
 ) -> str:
     input_ids = prompt.input_ids.clone()
     attention_mask = prompt.attention_mask.clone()
-    pad_token_id = resolve_optional_token_id(cast(Any, tokenizer.pad_token_id))
-    eos_token_id = resolve_optional_token_id(cast(Any, tokenizer.eos_token_id))
+    pad_token_id: int = tokenizer.pad_token_id  # pyright: ignore
+    eos_token_id: int = tokenizer.eos_token_id  # pyright: ignore
     generate_kwargs: dict[str, Any] = {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
@@ -346,6 +379,7 @@ def generate_response(
         "top_k": top_k,
         "pad_token_id": pad_token_id,
         "eos_token_id": eos_token_id,
+        "use_cache": True,
     }
     if min_p > 0.0:
         generate_kwargs["min_p"] = min_p
@@ -524,6 +558,17 @@ def parse_args() -> ExperimentArgs:
         action="store_true",
         help="Also run a trial where all selected layers are applied together.",
     )
+    parser.add_argument(
+        "--jsonl-path",
+        type=Path,
+        default=Path("steer_results.jsonl"),
+        help="File to write JSONL trial outputs to.",
+    )
+    parser.add_argument(
+        "--no-jsonl",
+        action="store_true",
+        help="Disable JSONL output.",
+    )
     parsed = parser.parse_args()
     strengths = cast(list[float] | None, parsed.strengths)
     if strengths is None:
@@ -535,15 +580,19 @@ def parse_args() -> ExperimentArgs:
     top_p = cast(float, parsed.top_p)
     top_k = cast(int, parsed.top_k)
     min_p = cast(float, parsed.min_p)
+    jsonl_path = cast(Path, parsed.jsonl_path)
+    if cast(bool, parsed.no_jsonl):
+        jsonl_path = None
     return ExperimentArgs(
         model_name=cast(str, parsed.model_name),
-        device=cast(str | None, parsed.device),
+        device=cast(torch.device | None, parsed.device),
         dtype_name=cast(str | None, parsed.dtype),
         steering_path=cast(Path, parsed.steering_path),
         concepts=cast(list[str] | None, parsed.concepts),
         layers=layers,
         strengths=strengths,
         combine_layers=cast(bool, parsed.combine_layers),
+        jsonl_path=jsonl_path,
         temperatures=temperatures,
         top_p=top_p,
         top_k=top_k,
@@ -575,94 +624,117 @@ def main() -> None:
         model_name=args.model_name,
         device=args.device,
         dtype=resolve_torch_dtype(args.dtype_name),
-        disable_cache=True,
+        disable_cache=False,
         set_pad_token_to_eos=True,
     )
-    template_prompt = prepare_prompt(tokenizer, _device)
+    template_prompt = prepare_prompt(tokenizer, model.device)
     print(
         f"Injection begins at token index {template_prompt.injection_index} of the formatted prompt."
     )
     print()
 
-    for concept in concept_names:
-        concept_vectors_all = steering_vectors[concept]
-        available_layers = sorted(concept_vectors_all.keys())
-        available_str = ", ".join(str(idx) for idx in available_layers)
-        print(f"=== Concept: {concept} ===")
-        print(f"Available layers: {available_str}")
+    jsonl_handle: TextIO | None = None
+    if args.jsonl_path is not None:
+        args.jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_handle = args.jsonl_path.open("w", encoding="utf-8")
 
-        requested_layers = args.layers or available_layers
-        unique_layers: list[int] = []
-        layer_groups: list[list[int]] = []
-        seen_groups: set[tuple[int, ...]] = set()
+    try:
+        for concept in concept_names:
+            concept_vectors_all = steering_vectors[concept]
+            available_layers = sorted(concept_vectors_all.keys())
+            available_str = ", ".join(str(idx) for idx in available_layers)
+            print(f"=== Concept: {concept} ===")
+            print(f"Available layers: {available_str}")
 
-        def add_group(group: list[int]) -> None:
-            if not group:
-                return
-            key = tuple(group)
-            if key not in seen_groups:
-                seen_groups.add(key)
-                layer_groups.append(group)
+            requested_layers = args.layers or available_layers
+            unique_layers: list[int] = []
+            layer_groups: list[list[int]] = []
+            seen_groups: set[tuple[int, ...]] = set()
 
-        if args.layers is None:
-            add_group(available_layers)
-        else:
-            for layer_idx in requested_layers:
-                if layer_idx not in concept_vectors_all:
-                    print(
-                        f"Skipping layer {layer_idx}: not present in steering vectors for '{concept}'."
-                    )
-                    continue
-                if layer_idx not in unique_layers:
-                    unique_layers.append(layer_idx)
-                    add_group([layer_idx])
-            if args.combine_layers and unique_layers:
-                add_group(unique_layers.copy())
+            def add_group(group: list[int]) -> None:
+                if not group:
+                    return
+                key = tuple(group)
+                if key not in seen_groups:
+                    seen_groups.add(key)
+                    layer_groups.append(group)
 
-        if not layer_groups:
-            print("No valid layer combinations to evaluate.\n")
-            continue
+            if args.layers is None:
+                raise ValueError("At least one layer must be specified")
+            else:
+                for layer_idx in requested_layers:
+                    if layer_idx not in concept_vectors_all:
+                        print(
+                            f"Skipping layer {layer_idx}: not present in steering vectors for '{concept}'."
+                        )
+                        continue
+                    if layer_idx not in unique_layers:
+                        unique_layers.append(layer_idx)
+                        add_group([layer_idx])
+                if args.combine_layers and unique_layers:
+                    add_group(unique_layers.copy())
 
-        for layer_group in layer_groups:
-            try:
-                concept_vectors = filter_concept_layers(
-                    concept_vectors_all, layer_group
-                )
-            except ValueError as exc:
-                print(f"Skipping layer set {layer_group}: {exc}")
+            if not layer_groups:
+                print("No valid layer combinations to evaluate.\n")
                 continue
 
-            layer_label = ", ".join(str(idx) for idx in sorted(concept_vectors.keys()))
-            for strength in args.strengths:
-                for temperature in args.temperatures:
-                    print(
-                        f"-- Layers [{layer_label}] | Strength {strength:+.2f} | "
-                        f"Temp {temperature:.2f}"
+            for layer_group in layer_groups:
+                try:
+                    concept_vectors = filter_concept_layers(
+                        concept_vectors_all, layer_group
                     )
-                    for trial in range(1, args.trials + 1):
-                        trial_seed = args.seed + trial - 1
-                        prompt_for_trial = clone_prompt(template_prompt)
-                        control, intervention = run_trial_pair(
-                            model=model,
-                            tokenizer=tokenizer,
-                            prompt=prompt_for_trial,
-                            concept_vectors=concept_vectors,
-                            strength=strength,
-                            max_new_tokens=args.max_new_tokens,
-                            temperature=temperature,
-                            top_p=args.top_p,
-                            top_k=args.top_k,
-                            min_p=args.min_p,
-                            do_sample=args.do_sample,
-                            seed=trial_seed,
-                            debug_residual=args.debug_residual,
-                        )
-                        print(f"  Trial {trial} Control: {control}")
+                except ValueError as exc:
+                    print(f"Skipping layer set {layer_group}: {exc}")
+                    continue
+
+                layer_order = sorted(concept_vectors.keys())
+                layer_label = ", ".join(str(idx) for idx in layer_order)
+                for strength in args.strengths:
+                    for temperature in args.temperatures:
                         print(
-                            f"  Trial {trial} Intervention (strength {strength:+.2f}): {intervention}"
+                            f"-- Layers [{layer_label}] | Strength {strength:+.2f} | "
+                            f"Temp {temperature:.2f}"
                         )
-                        print()
-        print()
+                        for trial in range(1, args.trials + 1):
+                            trial_seed = args.seed + trial - 1
+                            prompt_for_trial = clone_prompt(template_prompt)
+                            control, intervention = run_trial_pair(
+                                model=model,
+                                tokenizer=tokenizer,
+                                prompt=prompt_for_trial,
+                                concept_vectors=concept_vectors,
+                                strength=strength,
+                                max_new_tokens=args.max_new_tokens,
+                                temperature=temperature,
+                                top_p=args.top_p,
+                                top_k=args.top_k,
+                                min_p=args.min_p,
+                                do_sample=args.do_sample,
+                                seed=trial_seed,
+                                debug_residual=args.debug_residual,
+                            )
+                            print(f"  Trial {trial} Control: {control}")
+                            print(
+                                f"  Trial {trial} Intervention (strength {strength:+.2f}): {intervention}"
+                            )
+                            print()
+                            if jsonl_handle is not None:
+                                record = build_trial_record(
+                                    args=args,
+                                    concept=concept,
+                                    layers=layer_order,
+                                    strength=strength,
+                                    temperature=temperature,
+                                    trial=trial,
+                                    trial_seed=trial_seed,
+                                    control=control,
+                                    intervention=intervention,
+                                )
+                                write_jsonl_record(jsonl_handle, record)
+            print()
+    finally:
+        if jsonl_handle is not None:
+            jsonl_handle.close()
 
 
 if __name__ == "__main__":
