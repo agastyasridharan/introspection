@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch import nn
 
-from introspection.steer import LayerSteeringHook
+from introspection.steer import BatchedLayerSteeringHook
 
 
 class IdentityLayer(nn.Module):
@@ -18,7 +18,28 @@ class TupleLayer(nn.Module):
         return hidden, summary
 
 
-def test_layer_steering_hook_matches_manual_adjustment() -> None:
+def register_single_sample_hook(
+    layer: nn.Module,
+    *,
+    vector: torch.Tensor,
+    strength: float,
+    injection_index: int,
+    layer_index: int = 0,
+    debug_residual: bool = False,
+) -> BatchedLayerSteeringHook:
+    addend = (strength * vector).unsqueeze(0)
+    hook = BatchedLayerSteeringHook(
+        layer_module=layer,
+        layer_index=layer_index,
+        addend=addend,
+        injection_index=injection_index,
+        debug_residual=debug_residual,
+    )
+    hook.register()
+    return hook
+
+
+def test_single_sample_injection_matches_manual_adjustment() -> None:
     layer = IdentityLayer()
     vector = torch.tensor([0.5, -1.0, 2.0], dtype=torch.float32)
     strength = 0.75
@@ -28,15 +49,12 @@ def test_layer_steering_hook_matches_manual_adjustment() -> None:
     expected = base_hidden.clone()
     expected[:, injection_index:, :] += strength * vector
 
-    hook = LayerSteeringHook(
-        layer_module=layer,
-        layer_index=0,
+    hook = register_single_sample_hook(
+        layer,
         vector=vector,
-        injection_index=injection_index,
         strength=strength,
-        debug_residual=False,
+        injection_index=injection_index,
     )
-    hook.register()
     try:
         output = layer(base_hidden.clone())
     finally:
@@ -45,7 +63,7 @@ def test_layer_steering_hook_matches_manual_adjustment() -> None:
     torch.testing.assert_close(output, expected)
 
 
-def test_layer_steering_hook_handles_tuple_outputs() -> None:
+def test_tuple_output_supported() -> None:
     layer = TupleLayer()
     vector = torch.tensor([-0.25, 0.75], dtype=torch.float32)
     strength = 1.5
@@ -59,15 +77,13 @@ def test_layer_steering_hook_handles_tuple_outputs() -> None:
     expected_hidden[:, injection_index:, :] += strength * vector
     expected_summary = base_hidden.sum(dim=-1)
 
-    hook = LayerSteeringHook(
-        layer_module=layer,
-        layer_index=3,
+    hook = register_single_sample_hook(
+        layer,
         vector=vector,
-        injection_index=injection_index,
         strength=strength,
-        debug_residual=False,
+        injection_index=injection_index,
+        layer_index=3,
     )
-    hook.register()
     try:
         hidden_out, summary_out = layer(base_hidden.clone())
     finally:
@@ -77,7 +93,7 @@ def test_layer_steering_hook_handles_tuple_outputs() -> None:
     torch.testing.assert_close(summary_out, expected_summary)
 
 
-def test_layer_steering_hook_respects_hidden_dtype() -> None:
+def test_hidden_dtype_respected() -> None:
     layer = IdentityLayer()
     vector = torch.tensor([1.0, -2.0, 0.5, 3.0], dtype=torch.float32)
     strength = -0.25
@@ -88,17 +104,15 @@ def test_layer_steering_hook_respects_hidden_dtype() -> None:
         dtype=torch.float16,
     )
     expected = base_hidden.clone()
-    expected[:, injection_index:, :] += strength * vector.to(expected.dtype)
+    expected[:, injection_index:, :] += (strength * vector).to(expected.dtype)
 
-    hook = LayerSteeringHook(
-        layer_module=layer,
-        layer_index=7,
+    hook = register_single_sample_hook(
+        layer,
         vector=vector,
-        injection_index=injection_index,
         strength=strength,
-        debug_residual=False,
+        injection_index=injection_index,
+        layer_index=7,
     )
-    hook.register()
     try:
         output = layer(base_hidden.clone())
     finally:
@@ -107,86 +121,77 @@ def test_layer_steering_hook_respects_hidden_dtype() -> None:
     torch.testing.assert_close(output, expected, rtol=1e-3, atol=1e-3)
 
 
-def test_hook_persists_when_sequence_grows_no_cache():
+def test_hook_persists_when_sequence_grows_no_cache() -> None:
     layer = IdentityLayer()
-    d = 3
+    d_model = 3
     vector = torch.tensor([0.5, -1.0, 2.0], dtype=torch.float32)
     strength = 0.75
     injection_index = 2
 
-    hook = LayerSteeringHook(
-        layer_module=layer,
-        layer_index=0,
+    hook = register_single_sample_hook(
+        layer,
         vector=vector,
-        injection_index=injection_index,
         strength=strength,
-        debug_residual=False,
+        injection_index=injection_index,
     )
-    hook.register()
     try:
-        # Prefill (e.g., first forward of generation)
-        L = 5
-        base0 = torch.arange(1, 1 + L * d, dtype=torch.float32).view(1, L, d)
-        out0 = layer(base0.clone())
-        expected0 = base0.clone()
-        expected0[:, injection_index:, :] += strength * vector
-        torch.testing.assert_close(out0, expected0)
+        seq_len = 5
+        base_prefill = torch.arange(1, 1 + seq_len * d_model, dtype=torch.float32).view(
+            1, seq_len, d_model
+        )
+        out_prefill = layer(base_prefill.clone())
+        expected_prefill = base_prefill.clone()
+        expected_prefill[:, injection_index:, :] += strength * vector
+        torch.testing.assert_close(out_prefill, expected_prefill)
 
-        # Next step with use_cache=False: whole sequence recomputed with one extra token
-        base1 = torch.arange(1, 1 + (L + 1) * d, dtype=torch.float32).view(1, L + 1, d)
-        out1 = layer(base1.clone())
-        expected1 = base1.clone()
-        expected1[:, injection_index:, :] += strength * vector
-        torch.testing.assert_close(out1, expected1)  # <-- Fails on current code
+        base_extended = torch.arange(
+            1, 1 + (seq_len + 1) * d_model, dtype=torch.float32
+        ).view(1, seq_len + 1, d_model)
+        out_extended = layer(base_extended.clone())
+        expected_extended = base_extended.clone()
+        expected_extended[:, injection_index:, :] += strength * vector
+        torch.testing.assert_close(out_extended, expected_extended)
     finally:
         hook.remove()
 
 
-def test_hook_injects_on_single_token_decode_step():
+def test_hook_injects_on_single_token_decode_step() -> None:
     layer = IdentityLayer()
     vector = torch.tensor([0.5, -1.0, 2.0], dtype=torch.float32)
     strength = 1.0
-    injection_index = 3  # any index >= 0
+    injection_index = 3
 
-    hook = LayerSteeringHook(
-        layer_module=layer,
-        layer_index=0,
+    hook = register_single_sample_hook(
+        layer,
         vector=vector,
-        injection_index=injection_index,
         strength=strength,
-        debug_residual=False,
+        injection_index=injection_index,
     )
-    hook.register()
     try:
-        # Simulate prefill (long sequence once)
         prefill = torch.zeros(1, 8, 3)
         _ = layer(prefill.clone())
 
-        # Now simulate a decode step with cache: the layer sees only the new token
-        tok = torch.randn(1, 1, 3)
-        out = layer(tok.clone())
-        expected = tok.clone()
+        token = torch.randn(1, 1, 3)
+        out = layer(token.clone())
+        expected = token.clone()
         expected[:, 0:, :] += strength * vector
-        torch.testing.assert_close(out, expected)  # <-- Fails on current code
+        torch.testing.assert_close(out, expected)
     finally:
         hook.remove()
 
 
-def test_hook_remove_stops_and_resets():
+def test_hook_remove_stops_and_resets() -> None:
     layer = IdentityLayer()
     vector = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
     strength = 0.5
     injection_index = 1
 
-    hook = LayerSteeringHook(
-        layer_module=layer,
-        layer_index=0,
+    hook = register_single_sample_hook(
+        layer,
         vector=vector,
-        injection_index=injection_index,
         strength=strength,
-        debug_residual=False,
+        injection_index=injection_index,
     )
-    hook.register()
     out_with = layer(torch.zeros(1, 4, 3))
     hook.remove()
 
@@ -196,35 +201,38 @@ def test_hook_remove_stops_and_resets():
     torch.testing.assert_close(out_with, expected_without)
     torch.testing.assert_close(out_without, torch.zeros_like(out_without))
 
-    # Re-register: state (last_seq_len) must be reset
-    hook.register()
+    hook = register_single_sample_hook(
+        layer,
+        vector=vector,
+        strength=strength,
+        injection_index=injection_index,
+    )
     try:
         out_again = layer(torch.zeros(1, 2, 3))
-        expected = torch.zeros(1, 2, 3)
-        expected[:, injection_index:, :] += strength * vector
-        torch.testing.assert_close(out_again, expected)
+        expected_again = torch.zeros(1, 2, 3)
+        expected_again[:, injection_index:, :] += strength * vector
+        torch.testing.assert_close(out_again, expected_again)
     finally:
         hook.remove()
 
 
-def test_debug_residual_prints_once(capsys: pytest.CaptureFixture[str]):
+def test_debug_residual_prints_once(capsys: pytest.CaptureFixture[str]) -> None:
     layer = IdentityLayer()
     vector = torch.tensor([0.2, 0.1], dtype=torch.float32)
     strength = 2.0
     injection_index = 0
-    hook = LayerSteeringHook(
-        layer_module=layer,
-        layer_index=5,
+    hook = register_single_sample_hook(
+        layer,
         vector=vector,
-        injection_index=injection_index,
         strength=strength,
+        injection_index=injection_index,
+        layer_index=5,
         debug_residual=True,
     )
-    hook.register()
     try:
-        x = torch.ones(1, 3, 2)
-        _ = layer(x.clone())
-        _ = layer(x.clone())  # should not print the debug line a second time
+        tokens = torch.ones(1, 3, 2)
+        _ = layer(tokens.clone())
+        _ = layer(tokens.clone())
     finally:
         hook.remove()
 
@@ -233,26 +241,30 @@ def test_debug_residual_prints_once(capsys: pytest.CaptureFixture[str]):
     assert out.count("residual injection max error") == 1
 
 
-def test_batched_injection_slice():
+def test_per_sample_addends_applied_independently() -> None:
     layer = IdentityLayer()
-    vector = torch.tensor([1.0, -1.0, 0.0], dtype=torch.float32)
-    strength = 0.25
+    addends = torch.stack(
+        [
+            torch.tensor([0.5, -1.0, 0.0], dtype=torch.float32),
+            torch.tensor([-0.25, 0.0, 0.75], dtype=torch.float32),
+        ],
+        dim=0,
+    )
     injection_index = 2
 
-    hook = LayerSteeringHook(
+    hook = BatchedLayerSteeringHook(
         layer_module=layer,
-        layer_index=0,
-        vector=vector,
+        layer_index=4,
+        addend=addends,
         injection_index=injection_index,
-        strength=strength,
         debug_residual=False,
     )
     hook.register()
     try:
-        x = torch.arange(1, 1 + 2 * 5 * 3, dtype=torch.float32).view(2, 5, 3)
-        out = layer(x.clone())
-        expected = x.clone()
-        expected[:, injection_index:, :] += strength * vector
+        tokens = torch.arange(1, 1 + 2 * 5 * 3, dtype=torch.float32).view(2, 5, 3)
+        out = layer(tokens.clone())
+        expected = tokens.clone()
+        expected[:, injection_index:, :] += addends.unsqueeze(1)
         torch.testing.assert_close(out, expected)
     finally:
         hook.remove()
