@@ -7,6 +7,8 @@ requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.11.0",
     "huggingface-hub>=0.36.0",
+    "inspect-ai>=0.3.149",
+    "inspect-viz>=0.3.4",
     "torch>=2.9.0",
     "transformers>=4.57.1",
 ]

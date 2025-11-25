@@ -82,7 +82,6 @@ def build_batched_addends(
 def compute_injection_index(
     tokenizer: PreTrainedTokenizerBase,
     formatted_prompt: str,
-    input_ids: torch.Tensor,
     marker: str,
 ) -> int:
     encoded_offsets = tokenizer(
@@ -137,7 +136,6 @@ def prepare_prompt(
     injection_index = compute_injection_index(
         tokenizer=tokenizer,
         formatted_prompt=formatted_prompt,
-        input_ids=input_ids,
         marker=TRIAL_MARKER,
     )
     print(
@@ -377,7 +375,7 @@ def parse_args() -> ExperimentArgs:
         "--json-path",
         type=Path,
         default=None,
-        help="File to write JSONL trial outputs to.",
+        help="File to write JSON trial outputs to.",
     )
     parsed = parser.parse_args()
     return ExperimentArgs(
@@ -487,9 +485,8 @@ def steer(
                 print(f"  Trial {trial_idx} Control: {control_text}")
                 print(
                     f"  Trial {trial_idx} Intervention (strength {request.strength:+.2f}): "
-                    f"{intervention_text}"
+                    f"{intervention_text}\n"
                 )
-                print()
                 records.append(
                     build_trial_record(
                         args=args,
@@ -503,7 +500,6 @@ def steer(
                         intervention=intervention_text,
                     )
                 )
-    print()
     return records
 
 
@@ -538,36 +534,35 @@ def main() -> None:
         )
         records.extend(concept_records)
 
-    if args.json_path is not None:
-        args.json_path.parent.mkdir(parents=True, exist_ok=True)
-        experiment_summary = {
-            "model_name": args.model_name,
-            "steering_vector_path": str(args.steering_vector_path),
-            "dtype": args.dtype_name,
-            "prompt": {
-                "messages": PROMPT_MESSAGES,
-                "formatted": template_prompt.formatted_prompt,
-                "injection_index": template_prompt.injection_index,
-            },
-            "settings": {
-                "strengths": args.strengths,
-                "temperatures": args.temperatures,
-                "top_p": args.top_p,
-                "top_k": args.top_k,
-                "min_p": args.min_p,
-                "max_new_tokens": args.max_new_tokens,
-                "trials": args.trials,
-                "do_sample": args.do_sample,
-                "seed": args.seed,
-                "layers": args.layers,
-                "concepts_requested": args.concepts,
-            },
-            "concepts_evaluated": concepts_evaluated,
-            "results": records,
-        }
-        with args.json_path.open("w", encoding="utf-8") as handle:
-            json.dump(experiment_summary, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
+    args.json_path.parent.mkdir(parents=True, exist_ok=True)
+    experiment_summary = {
+        "model_name": args.model_name,
+        "steering_vector_path": str(args.steering_vector_path),
+        "dtype": args.dtype_name,
+        "prompt": {
+            "messages": PROMPT_MESSAGES,
+            "formatted": template_prompt.formatted_prompt,
+            "injection_index": template_prompt.injection_index,
+        },
+        "settings": {
+            "strengths": args.strengths,
+            "temperatures": args.temperatures,
+            "top_p": args.top_p,
+            "top_k": args.top_k,
+            "min_p": args.min_p,
+            "max_new_tokens": args.max_new_tokens,
+            "trials": args.trials,
+            "do_sample": args.do_sample,
+            "seed": args.seed,
+            "layers": args.layers,
+            "concepts_requested": args.concepts,
+        },
+        "concepts_evaluated": concepts_evaluated,
+        "results": records,
+    }
+    with args.json_path.open("w", encoding="utf-8") as handle:
+        json.dump(experiment_summary, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
 
 
 if __name__ == "__main__":
