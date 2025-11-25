@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import random
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -29,7 +28,6 @@ def capture_prompt_hidden_states(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
     prompt: str,
-    device: str,
 ) -> list[torch.Tensor]:
     messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
     formatted_prompt = cast(
@@ -42,7 +40,7 @@ def capture_prompt_hidden_states(
         ),
     )
     encoded: BatchEncoding = tokenizer(formatted_prompt, return_tensors="pt")
-    encoded = encoded.to(device)
+    encoded = encoded.to(model.device)
     input_ids = cast(torch.Tensor, encoded["input_ids"])
     with torch.no_grad():
         outputs = cast(
@@ -70,7 +68,6 @@ def collect_layer_activations(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
     nouns: Sequence[str],
-    device: str,
     description: str,
 ) -> list[list[torch.Tensor]]:
     layer_activations: list[list[torch.Tensor]] = []
@@ -78,7 +75,7 @@ def collect_layer_activations(
 
     for idx, noun in enumerate(nouns):
         prompt = PROMPT.format(concept=noun)
-        vectors = capture_prompt_hidden_states(model, tokenizer, prompt, device)
+        vectors = capture_prompt_hidden_states(model, tokenizer, prompt)
         if not layer_activations:
             layer_activations = [[vector] for vector in vectors]
         else:
@@ -86,16 +83,6 @@ def collect_layer_activations(
                 layer_activations[layer_idx].append(vector)
         print(f"[{idx + 1}/{total}] {description} '{noun}'.")
     return layer_activations
-
-
-def compute_baseline_means(
-    layer_activations: list[list[torch.Tensor]],
-) -> list[torch.Tensor]:
-    means: list[torch.Tensor] = []
-    for layer_vectors in layer_activations:
-        stacked = torch.stack(layer_vectors, dim=0)
-        means.append(stacked.mean(dim=0))
-    return means
 
 
 def compute_steering_vectors(
@@ -138,7 +125,6 @@ def validate_steering_vectors(steering: dict[int, dict[str, torch.Tensor]]) -> N
 
 def run_experiment(
     model_name: str,
-    device: torch.device | None,
     dtype_name: str | None,
     output_path: Path,
     concept_count: int,
@@ -146,9 +132,8 @@ def run_experiment(
 ) -> None:
     concepts = generate_concepts(concept_count, seed)
 
-    tokenizer, model, resolved_device = load_model(
+    tokenizer, model = load_model(
         model_name=model_name,
-        device=device,
         dtype=resolve_torch_dtype(dtype_name),
     )
 
@@ -156,16 +141,17 @@ def run_experiment(
         model=model,
         tokenizer=tokenizer,
         nouns=BASELINE_WORDS,
-        device=resolved_device,
         description="Captured baseline activations for",
     )
-    baseline_means = compute_baseline_means(baseline_activations)
+    baseline_means = [
+        torch.stack(layer_vectors, dim=0).mean(dim=0)
+        for layer_vectors in baseline_activations
+    ]
 
     concept_activations = collect_layer_activations(
         model=model,
         tokenizer=tokenizer,
         nouns=concepts,
-        device=resolved_device,
         description="Captured concept activations for",
     )
 
@@ -182,17 +168,7 @@ def run_experiment(
     print(f"Saved steering vectors to {output_path}.")
 
 
-@dataclass
-class ExperimentArgs:
-    model_name: str
-    device: str | None
-    dtype_name: str | None
-    concept_count: int
-    output_path: Path
-    seed: int
-
-
-def parse_args() -> ExperimentArgs:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate steering vectors for concepts."
     )
@@ -200,11 +176,6 @@ def parse_args() -> ExperimentArgs:
         "--model-name",
         default="Qwen/Qwen3-8B",
         help="Hugging Face model identifier to load.",
-    )
-    _ = parser.add_argument(
-        "--device",
-        default=None,
-        help="Torch device string to run on (e.g. 'cuda', 'cuda:1', 'cpu'). Defaults based on availability.",
     )
     _ = parser.add_argument(
         "--dtype",
@@ -230,23 +201,14 @@ def parse_args() -> ExperimentArgs:
         default=13,
         help="Random seed used for concept sampling.",
     )
-    parsed = parser.parse_args()
-    return ExperimentArgs(
-        model_name=cast(str, parsed.model_name),
-        device=cast(str | None, parsed.device),
-        dtype_name=cast(str | None, parsed.dtype),
-        concept_count=cast(int, parsed.concept_count),
-        output_path=cast(Path, parsed.output_path),
-        seed=cast(int, parsed.seed),
-    )
+    return parser.parse_args()
 
 
 def main():
     args = parse_args()
     run_experiment(
         model_name=args.model_name,
-        device=torch.device(args.device) if args.device else None,
-        dtype_name=args.dtype_name,
+        dtype_name=args.dtype,
         output_path=args.output_path,
         concept_count=args.concept_count,
         seed=args.seed,

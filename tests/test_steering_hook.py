@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch import nn
 
-from introspection.steer import BatchedLayerSteeringHook
+from introspection.hooks import BatchedLayerSteeringHook
 
 
 class IdentityLayer(nn.Module):

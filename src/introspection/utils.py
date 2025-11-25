@@ -22,23 +22,17 @@ def resolve_torch_dtype(name: str | None) -> torch.dtype | None:
 
 def load_model(
     model_name: str,
-    device: torch.device | None,
     dtype: torch.dtype | None,
     *,
     disable_cache: bool = False,
     set_pad_token_to_eos: bool = False,
-) -> tuple[PreTrainedTokenizerBase, PreTrainedModel, str]:
-    resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    resolved_device = str(resolved_device)
+) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     resolved_dtype = dtype
     if resolved_dtype is None:
-        if resolved_device.startswith("cuda") and torch_cuda.is_available():
-            if torch_cuda.is_bf16_supported():
-                resolved_dtype = torch.bfloat16
-            else:
-                resolved_dtype = torch.float16
+        if torch_cuda.is_available() and torch_cuda.is_bf16_supported():
+            resolved_dtype = torch.bfloat16
         else:
-            resolved_dtype = torch.float32
+            resolved_dtype = torch.float16
 
     tokenizer = cast(
         PreTrainedTokenizerBase,
@@ -71,4 +65,4 @@ def load_model(
     if disable_cache:
         model.config.use_cache = False
 
-    return tokenizer, model, resolved_device
+    return tokenizer, model
