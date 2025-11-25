@@ -16,6 +16,8 @@
 - Prefer explicit helper functions for data processing (see `compute_steering_vectors`).
 - Keep docstrings concise and informative; add comments only for non-obvious logic.
 * No excessive error handling or try/catching 
+* No excessive casting 
+* No excessive input validation and checking. Please fail loudly if something is unexpected!! Be concise, reduce branching where possible. 
 * Always run `uv run ruff check .` and `uv run basedpyright .` and fix all the errors after making code changes. If the issues tend to be with library code, it's okay to disable the pyright warnings if they're hard to fix
 * Always format at the end of a change by running `uv run ruff format .`
 * Never use Optional or Union or Tuple or List etc. for type hints, always prefer `| None` or `|` or `tuple` or `list` etc.

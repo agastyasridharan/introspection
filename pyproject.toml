@@ -42,6 +42,9 @@ executionEnvironments = [
   { root = "tests", reportPrivateUsage = false, reportMissingTypeStubs = false },
 ]
 
+[project.entry-points.inspect_ai]
+introspection = "introspection._registry"
+
 [tool.ruff]
 exclude = ["**/*.ipynb"]
 lint.ignore = [
