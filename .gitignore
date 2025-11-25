@@ -10,3 +10,4 @@ wheels/
 .venv
 *.pt
 .ignore
+.env
