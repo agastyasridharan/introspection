@@ -6,9 +6,14 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.11.0",
+    "anthropic>=0.75.0",
     "huggingface-hub>=0.36.0",
     "inspect-ai>=0.3.149",
     "inspect-viz>=0.3.4",
+    "matplotlib>=3.10.7",
+    "openai>=2.8.1",
+    "quarto-cli>=1.8.26",
+    "seaborn>=0.13.2",
     "torch>=2.9.0",
     "transformers>=4.57.1",
 ]
@@ -21,6 +26,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "basedpyright>=1.32.1",
+    "pandas-stubs>=2.3.2.250926",
     "pdbpp>=0.11.7",
     "pytest>=8.4.2",
     "ruff>=0.14.3",

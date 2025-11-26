@@ -4,16 +4,18 @@ import json
 import uuid
 from pathlib import Path
 
+import inspect_ai.model
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.scorer import model_graded_qa
 
-from introspection.grader_prompts import get_grader_prompt
+from introspection.grader_prompts import GRADER_PROMPTS, get_grader_prompt
 
 
-def load_samples(data_dir: Path, grader_prompt: str) -> list[Sample]:
+def load_samples(data_dir: Path) -> list[Sample]:
     samples: list[Sample] = []
 
-    for sweep_path in data_dir.glob("*/sweep.jsonl"):
+    for sweep_path in data_dir.glob("*/sweep.json"):
         payload = json.loads(sweep_path.read_text())
         prompt_block = payload["prompt"]
         question = prompt_block["formatted"].strip()
@@ -38,11 +40,6 @@ def load_samples(data_dir: Path, grader_prompt: str) -> list[Sample]:
 
             for condition in ("control", "intervention"):
                 response = result[condition]
-                prompt_text = grader_prompt.format(
-                    question=question,
-                    response=response,
-                )
-
                 sample_id = (
                     f"{sweep_path.parent.name}-"
                     f"{concept}-"
@@ -54,7 +51,7 @@ def load_samples(data_dir: Path, grader_prompt: str) -> list[Sample]:
 
                 samples.append(
                     Sample(
-                        input=prompt_text,
+                        input=question,
                         target="",
                         id=sample_id,
                         metadata={
@@ -62,6 +59,8 @@ def load_samples(data_dir: Path, grader_prompt: str) -> list[Sample]:
                             "condition": condition,
                             "response": response,
                             "question": question,
+                            "prompt": question,
+                            "word": concept,
                         },
                     )
                 )
@@ -71,11 +70,24 @@ def load_samples(data_dir: Path, grader_prompt: str) -> list[Sample]:
 
 @task
 def grade_responses(
-    data_dir: str,
-    grader_prompt: str,
+    data_dir: str = "data/",
 ) -> Task:
-    prompt_template = get_grader_prompt(grader_prompt)
-    samples = load_samples(Path(data_dir), prompt_template)
+    samples = load_samples(Path(data_dir))
     dataset = MemoryDataset(samples, name="steering_responses")
+    model = inspect_ai.model.get_model()
+    grade_pattern = r"(?i)\b(YES|NO)\b"
+    prompt_names = list(GRADER_PROMPTS.keys())
+    scorers = [
+        model_graded_qa(
+            template=get_grader_prompt(prompt_name),
+            model=model,
+            grade_pattern=grade_pattern,
+            include_history=False,
+        )
+        for prompt_name in prompt_names
+    ]
 
-    return Task(dataset=dataset)
+    return Task(
+        dataset=dataset,
+        scorer=scorers,
+    )

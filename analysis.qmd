@@ -1,0 +1,182 @@
+---
+title: "Grader Prompt Score Analysis"
+format: html
+jupyter: python3
+---
+
+# Grader Prompt Score Analysis
+
+This document visualizes how each grader prompt's scores vary across different layer indexes, model scales, strengths, and temperatures.
+
+```{python}
+# | echo: false
+# | warning: false
+import sys
+from pathlib import Path
+
+from introspection.analysis import load_and_process_data, aggregate_scores
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Set style
+sns.set_style("whitegrid")
+plt.rcParams["figure.figsize"] = (12, 6)
+```
+
+## Load Data
+
+```{python}
+# | echo: true
+df = load_and_process_data("../../logs/")
+print(f"Loaded {len(df)} rows")
+print(f"\nColumns: {list(df.columns)}")
+print(f"\nGrader prompts: {df['grader_prompt'].unique()}")
+print(f"\nModel scales: {df['model_scale'].unique()}")
+print(f"\nConditions: {df['condition'].unique()}")
+```
+
+## Aggregate Scores
+
+```{python}
+# | echo: true
+df_agg = aggregate_scores(df)
+print(f"Aggregated to {len(df_agg)} rows")
+df_agg.head()
+```
+
+## Visualizations
+
+### Scores by Layer Index - All Conditions
+
+```{python}
+# | echo: true
+# | fig-width: 14
+# | fig-height: 8
+
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+axes = axes.flatten()
+
+for idx, prompt in enumerate(sorted(df_agg["grader_prompt"].unique())):
+    if idx >= 4:
+        break
+
+    ax = axes[idx]
+    df_prompt = df_agg[df_agg["grader_prompt"] == prompt]
+
+    for condition in ["control", "intervention"]:
+        df_cond = df_prompt[df_prompt["condition"] == condition]
+
+        for model_scale in sorted(df_cond["model_scale"].unique()):
+            df_model = df_cond[df_cond["model_scale"] == model_scale]
+
+            for strength in sorted(df_model["strength"].unique()):
+                df_strength = df_model[df_model["strength"] == strength]
+
+                for temp in sorted(df_strength["temperature"].unique()):
+                    df_plot = df_strength[df_strength["temperature"] == temp]
+                    df_plot = df_plot.sort_values("layer_index")
+
+                    label = (
+                        f"{model_scale}, strength={strength}, temp={temp}, {condition}"
+                    )
+                    ax.plot(
+                        df_plot["layer_index"],
+                        df_plot["mean_score"],
+                        marker="o",
+                        label=label,
+                        alpha=0.7,
+                        linewidth=2,
+                    )
+
+    ax.set_xlabel("Layer Index")
+    ax.set_ylabel("Mean Score (Proportion YES)")
+    ax.set_title(f"Grader Prompt: {prompt}")
+    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+### Scores by Layer Index - Faceted by Model Scale
+
+```{python}
+# | echo: true
+# | fig-width: 16
+# | fig-height: 10
+
+for prompt in sorted(df_agg["grader_prompt"].unique()):
+    df_prompt = df_agg[df_agg["grader_prompt"] == prompt]
+
+    g = sns.relplot(
+        data=df_prompt,
+        x="layer_index",
+        y="mean_score",
+        hue="strength",
+        style="condition",
+        col="model_scale",
+        row="temperature",
+        kind="line",
+        marker="o",
+        height=4,
+        aspect=1.2,
+        facet_kws={"sharey": True, "sharex": True},
+    )
+
+    g.fig.suptitle(f"Grader Prompt: {prompt}", y=1.02)
+    g.set_axis_labels("Layer Index", "Mean Score (Proportion YES)")
+
+    plt.show()
+```
+
+### Scores by Layer Index - Intervention Only, Grouped by Strength
+
+```{python}
+# | echo: true
+# | fig-width: 14
+# | fig-height: 8
+
+df_intervention = df_agg[df_agg["condition"] == "intervention"]
+
+for prompt in sorted(df_intervention["grader_prompt"].unique()):
+    df_prompt = df_intervention[df_intervention["grader_prompt"] == prompt]
+
+    fig, axes = plt.subplots(
+        len(df_prompt["model_scale"].unique()),
+        1,
+        figsize=(14, 4 * len(df_prompt["model_scale"].unique())),
+        sharex=True,
+    )
+
+    if len(df_prompt["model_scale"].unique()) == 1:
+        axes = [axes]
+
+    for ax, model_scale in zip(axes, sorted(df_prompt["model_scale"].unique())):
+        df_model = df_prompt[df_prompt["model_scale"] == model_scale]
+
+        for temp in sorted(df_model["temperature"].unique()):
+            df_temp = df_model[df_model["temperature"] == temp]
+
+            for strength in sorted(df_temp["strength"].unique()):
+                df_strength = df_temp[df_temp["strength"] == strength]
+                df_strength = df_strength.sort_values("layer_index")
+
+                ax.plot(
+                    df_strength["layer_index"],
+                    df_strength["mean_score"],
+                    marker="o",
+                    label=f"strength={strength}, temp={temp}",
+                    linewidth=2,
+                )
+
+        ax.set_xlabel("Layer Index")
+        ax.set_ylabel("Mean Score (Proportion YES)")
+        ax.set_title(f"{prompt} - {model_scale} (Intervention Only)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+```
+
