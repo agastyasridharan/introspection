@@ -192,7 +192,7 @@ def parse_args() -> argparse.Namespace:
     _ = parser.add_argument(
         "--output-path",
         type=Path,
-        default=Path(__file__).resolve().parent / "steering_vectors.pt",
+        default="data/qwen_8b/steering_vectors.pt",
         help="Path to save the serialized steering vectors.",
     )
     _ = parser.add_argument(
