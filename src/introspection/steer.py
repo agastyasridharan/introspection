@@ -88,19 +88,10 @@ def compute_injection_index(
         formatted_prompt,
         return_offsets_mapping=True,
     )
-    offsets_root = cast(Any, encoded_offsets["offset_mapping"])
-    offsets_list_raw = offsets_root[0]
-    offsets_list: list[Any] = cast(list[Any], offsets_list_raw)
-    normalized: list[tuple[int, int]] = []
-    for entry in offsets_list:
-        entry_seq = list(cast(Sequence[Any], entry))
-        start_raw, end_raw = entry_seq[0], entry_seq[1]
-        start = int(cast(int, start_raw))
-        end = int(cast(int, end_raw))
-        normalized.append((start, end))
+    offsets_list = cast(list[tuple[int, int]], encoded_offsets["offset_mapping"])
     marker_start = formatted_prompt.index(marker)
     token_index = None
-    for idx, (start, end) in enumerate(normalized):
+    for idx, (start, end) in enumerate(offsets_list):
         if start <= marker_start < end:
             token_index = idx
             break
@@ -305,6 +296,7 @@ def parse_args() -> ExperimentArgs:
         "--layer",
         nargs="+",
         dest="layers",
+        required=True,
         type=int,
         metavar="LAYER",
         help="Restrict interventions to specific zero-based layer indices.",
@@ -312,6 +304,7 @@ def parse_args() -> ExperimentArgs:
     parser.add_argument(
         "--strength",
         nargs="+",
+        required=True,
         dest="strengths",
         type=float,
         metavar="STRENGTH",
@@ -333,6 +326,7 @@ def parse_args() -> ExperimentArgs:
         "--temperature",
         nargs="+",
         dest="temperatures",
+        required=True,
         type=float,
         metavar="TEMP",
         help="Sampling temperature(s) for generation.",
