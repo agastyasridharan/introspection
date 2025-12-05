@@ -4,7 +4,7 @@ format: html
 jupyter: python3
 ---
 
-This document visualizes how each grader prompt's scores vary across different layer indexes, model scales, strengths, and temperatures.
+This document visualizes how each grader prompt's scores vary across different layer indexes, model scales, and strengths.
 
 ```{python}
 # | echo: false
@@ -13,48 +13,44 @@ from introspection.analysis import load_and_process_data, aggregate_scores
 
 import inspect_viz as viz
 from inspect_viz import input, layout
-from inspect_viz.mark import line
-from inspect_viz.plot import plot
-```
-
-## Load Data
-
-```{python}
-# | echo: true
+from inspect_viz.mark import dot, line
+from inspect_viz.plot import plot, legend
 df = load_and_process_data("logs/")
-print(f"Loaded {len(df)} rows")
-print(f"\nColumns: {list(df.columns)}")
-print(f"\nGrader prompts: {df['grader_prompt'].unique()}")
-print(f"\nModel scales: {df['model_scale'].unique()}")
-print(f"\nConditions: {df['condition'].unique()}")
-```
-
-## Aggregate Scores
-
-```{python}
-# | echo: true
 df_agg = aggregate_scores(df)
-print(f"Aggregated to {len(df_agg)} rows")
-df_agg.head()
 ```
 
 ## Interactive Visualization
 
+Use the filters below to explore the data. Checkboxes allow you to toggle multiple grader prompts and conditions (control vs intervention) independently.
+
 ```{python}
 # | echo: false
+# Helper to format labels: replace underscores with spaces and title case
+def format_label(s: str) -> str:
+    return s.replace("_", " ").title()
+
+
 # Convert numeric columns to strings for dropdown compatibility
 df_agg["strength"] = df_agg["strength"].astype(str)
-df_agg["temperature"] = df_agg["temperature"].astype(str)
 
+# Create formatted versions for display
+df_agg["grader_prompt_display"] = df_agg["grader_prompt"].apply(format_label)
+df_agg["condition_display"] = df_agg["condition"].apply(format_label)
+df_agg["series"] = (
+    df_agg["grader_prompt_display"] + " (" + df_agg["condition_display"] + ")"
+)
+
+# Create single Data instance for synchronized filtering
 data = viz.Data(df_agg)
 selection = viz.Selection.intersect()
 
+# Dropdown filters for model scale and strength (value="auto" selects first, no "All" option)
 model_scale_filter = input.select(
     data=data,
     column="model_scale",
     target=selection,
     label="Model Scale",
-    value="all",
+    value="auto",
 )
 
 strength_filter = input.select(
@@ -62,46 +58,71 @@ strength_filter = input.select(
     column="strength",
     target=selection,
     label="Strength",
-    value="all",
+    value="auto",
 )
 
-temperature_filter = input.select(
+# Checkbox toggles for grader prompts and conditions (using formatted display columns)
+grader_prompt_filter = input.checkbox_group(
     data=data,
-    column="temperature",
+    column="grader_prompt_display",
     target=selection,
-    label="Temperature",
-    value="all",
+    label="Grader Prompt",
 )
 
-condition_filter = input.select(
+condition_filter = input.checkbox_group(
     data=data,
-    column="condition",
+    column="condition_display",
     target=selection,
     label="Condition",
-    value="all",
 )
 
-# Display filters in a horizontal row
-layout.hconcat(model_scale_filter, strength_filter, temperature_filter, condition_filter)
-```
-
-```{python}
-# | echo: false
-# Display the plot separately
-plot(
+# Create the plot
+the_plot = plot(
     line(
         data=data,
         x="layer_percentage",
         y="mean_score",
-        stroke="grader_prompt",
+        stroke="series",
         filter_by=selection,
-        marker="dot",
+    ),
+    dot(
+        data=data,
+        x="layer_percentage",
+        y="mean_score",
+        fill="series",
+        filter_by=selection,
+        r=5,
+        channels={
+            "Grader Prompt": "grader_prompt_display",
+            "Condition": "condition_display",
+            "Layer %": "layer_percentage",
+            "Mean Score": "mean_score",
+            "Model Scale": "model_scale",
+            "Strength": "strength",
+        },
     ),
     x_label="Layer Percentage",
-    y_label="Mean Score (Proportion YES)",
-    title="Scores by Layer Percentage",
-    width=800,
-    height=500,
-    legend="color",
+    y_label="Mean Score",
+    width=1200,
+    height=700,
+    margin_left=60,
+    margin_top=40,
+    margin_right=40,
+    margin_bottom=40,
+    legend=legend("color", frame_anchor="bottom-right", border=False, inset=20),
+    grid=True,
+    y_domain=[0, 1.0],
+    x_domain=[0, 100],
+    color_domain="fixed",
+    style={"fontSize": "16px"},
+)
+
+# Combine filters and plot into single layout for display
+# Put grader prompt and condition on separate rows to avoid overlap
+layout.vconcat(
+    layout.hconcat(model_scale_filter, strength_filter),
+    grader_prompt_filter,
+    condition_filter,
+    the_plot,
 )
 ```
