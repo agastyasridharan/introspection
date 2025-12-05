@@ -7,7 +7,7 @@ from pathlib import Path
 import inspect_ai.model
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.scorer import model_graded_qa
+from inspect_ai.scorer import Scorer, model_graded_qa
 
 from introspection.grader_prompts import GRADER_PROMPTS, get_grader_prompt
 
@@ -15,7 +15,7 @@ from introspection.grader_prompts import GRADER_PROMPTS, get_grader_prompt
 def load_samples(data_dir: Path) -> list[Sample]:
     samples: list[Sample] = []
 
-    for sweep_path in data_dir.glob("*/sweep.json"):
+    for sweep_path in data_dir.glob("*/sweep_early.json"):
         payload = json.loads(sweep_path.read_text())
         prompt_block = payload["prompt"]
         question = prompt_block["formatted"].strip()
@@ -34,7 +34,9 @@ def load_samples(data_dir: Path) -> list[Sample]:
                 "min_p": result["min_p"],
                 "trial": result["trial"],
                 "seed": result["seed"],
-                "steering_path": result["steering_path"],
+                "steering_path": result["steering_path"]
+                if "steering_path" in result
+                else result["steering_vector_path"],
                 "injection_index": prompt_block["injection_index"],
             }
 
@@ -77,15 +79,16 @@ def grade_responses(
     model = inspect_ai.model.get_model()
     grade_pattern = r"(?i)\b(YES|NO)\b"
     prompt_names = list(GRADER_PROMPTS.keys())
-    scorers = [
-        model_graded_qa(
+    scorers: list[Scorer] = []
+    for prompt_name in prompt_names:
+        scorer = model_graded_qa(
             template=get_grader_prompt(prompt_name),
             model=model,
             grade_pattern=grade_pattern,
             include_history=False,
         )
-        for prompt_name in prompt_names
-    ]
+        scorer.__registry_info__.name = prompt_name  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue]
+        scorers.append(scorer)
 
     return Task(
         dataset=dataset,

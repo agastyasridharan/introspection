@@ -154,3 +154,15 @@ BASELINE_WORDS: list[str] = [
     "rice",
     "enigmas",
 ]
+
+
+# Model layer counts for Qwen transformer models
+# These represent the total number of transformer layers (num_hidden_layers) for each model.
+# Used to convert absolute layer indices to percentage-based positions for cross-model comparison.
+# Sources: Based on standard transformer scaling patterns and observed layer indices in experiments.
+MODEL_LAYER_COUNTS: dict[str, int] = {
+    "Qwen/Qwen3-8B": 36,
+    "Qwen/Qwen3-14B": 40,
+    "Qwen/Qwen3-32B": 64,
+    "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8": 94,
+}

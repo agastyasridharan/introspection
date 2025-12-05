@@ -10,3 +10,5 @@ wheels/
 .venv
 .ignore
 .env
+analysis_files
+analysis.html
