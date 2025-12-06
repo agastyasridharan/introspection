@@ -34,6 +34,7 @@ class PromptSetup:
 
 @dataclass
 class BatchedInterventionRequest:
+    concept: str
     layers: list[int]
     strength: float
     layer_label: str

@@ -64,15 +64,19 @@ def build_trial_record(
 
 
 def build_batched_addends(
-    concept_vectors: dict[int, torch.Tensor],
+    all_steering_vectors: dict[str, dict[int, torch.Tensor]],
     requests: Sequence[BatchedInterventionRequest],
 ) -> dict[int, torch.Tensor]:
     addends: dict[int, torch.Tensor] = {}
     unique_layers = sorted({layer for request in requests for layer in request.layers})
+    # Get a reference vector to determine shape and device
+    first_concept = next(iter(all_steering_vectors.keys()))
+    first_layer = unique_layers[0]
+    ref_vector = all_steering_vectors[first_concept][first_layer]
     for layer_idx in unique_layers:
-        vector = concept_vectors[layer_idx]
-        addends[layer_idx] = vector.new_zeros((len(requests), vector.shape[0]))
+        addends[layer_idx] = ref_vector.new_zeros((len(requests), ref_vector.shape[0]))
     for row_idx, request in enumerate(requests):
+        concept_vectors = all_steering_vectors[request.concept]
         for layer_idx in request.layers:
             vector = concept_vectors[layer_idx]
             addends[layer_idx][row_idx].copy_(request.strength * vector)
@@ -221,7 +225,7 @@ def run_batched_interventions(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
     prompt: PromptSetup,
-    concept_vectors: dict[int, torch.Tensor],
+    all_steering_vectors: dict[str, dict[int, torch.Tensor]],
     requests: Sequence[BatchedInterventionRequest],
     max_new_tokens: int,
     temperature: float,
@@ -232,7 +236,7 @@ def run_batched_interventions(
     seed: int,
     debug_residual: bool,
 ) -> list[str]:
-    addends_by_layer = build_batched_addends(concept_vectors, requests)
+    addends_by_layer = build_batched_addends(all_steering_vectors, requests)
     hooks = register_batched_intervention_hooks(
         model=model,
         addends_by_layer=addends_by_layer,
@@ -388,44 +392,55 @@ def parse_args() -> ExperimentArgs:
 
 def steer(
     args: ExperimentArgs,
-    concept: str,
-    concept_vectors: dict[int, torch.Tensor],
+    concept_names: list[str],
+    all_steering_vectors: dict[str, dict[int, torch.Tensor]],
     tokenizer: PreTrainedTokenizerBase,
     model: PreTrainedModel,
     template_prompt: PromptSetup,
 ) -> list[dict[str, Any]]:
-    available_layers = sorted(concept_vectors.keys())
+    # Validate layers exist for all concepts
+    first_concept = concept_names[0]
+    available_layers = sorted(all_steering_vectors[first_concept].keys())
     print(f"Available layers: {', '.join(str(idx) for idx in available_layers)}")
     requested_layers = args.layers
     unique_layers = list(dict.fromkeys(requested_layers))
-    missing_layers = [layer for layer in unique_layers if layer not in concept_vectors]
+    missing_layers = [layer for layer in unique_layers if layer not in available_layers]
     if missing_layers:
         raise ValueError(
             f"Requested layers {missing_layers} not found in steering vectors. "
             f"Available: {available_layers}"
         )
+
+    # Build requests for all (concept, layer, strength) combinations
     base_requests: list[BatchedInterventionRequest] = []
-    for layer_idx in unique_layers:
-        layer_label = str(layer_idx)
-        for strength in args.strengths:
-            base_requests.append(
-                BatchedInterventionRequest(
-                    layers=[layer_idx],
-                    strength=strength,
-                    layer_label=layer_label,
+    for concept in concept_names:
+        for layer_idx in unique_layers:
+            layer_label = str(layer_idx)
+            for strength in args.strengths:
+                base_requests.append(
+                    BatchedInterventionRequest(
+                        concept=concept,
+                        layers=[layer_idx],
+                        strength=strength,
+                        layer_label=layer_label,
+                    )
                 )
-            )
+
+    print(
+        f"Batching {len(concept_names)} concepts × {len(unique_layers)} layers × "
+        f"{len(args.strengths)} strengths = {len(base_requests)} interventions per trial"
+    )
 
     trial_seeds = [args.seed + idx for idx in range(args.trials)]
-    # controls_by_trial: one control per trial (not per layer/strength)
-    # interventions_by_request: one list per (layer, strength) combination
+    # controls_by_trial: one control per trial (not per concept/layer/strength)
+    # interventions_by_request: one list per (concept, layer, strength) combination
     temperature_results: dict[float, tuple[list[str], list[list[str]]]] = {}
 
     for temperature in args.temperatures:
         controls_by_trial: list[str] = []
         interventions_by_request: list[list[str]] = [[] for _ in base_requests]
         for trial_seed in trial_seeds:
-            # Generate single control response (no steering, so layer/strength don't matter)
+            # Generate single control response (no steering)
             set_random_seed(trial_seed)
             control_responses = generate_batched_responses(
                 model=model,
@@ -440,12 +455,12 @@ def steer(
                 do_sample=args.do_sample,
             )
             controls_by_trial.append(control_responses[0])
-            # Generate batched interventions (one per layer/strength combination)
+            # Generate batched interventions (one per concept/layer/strength)
             interventions = run_batched_interventions(
                 model=model,
                 tokenizer=tokenizer,
                 prompt=template_prompt,
-                concept_vectors=concept_vectors,
+                all_steering_vectors=all_steering_vectors,
                 requests=base_requests,
                 max_new_tokens=args.max_new_tokens,
                 temperature=temperature,
@@ -471,8 +486,8 @@ def steer(
             ]
             intervention_trials = interventions_by_request[request_idx]
             print(
-                f"-- Layers [{request.layer_label}] | Strength {request.strength:+.2f} | "
-                f"Temp {temperature:.2f}"
+                f"-- Concept [{request.concept}] | Layer [{request.layer_label}] | "
+                f"Strength {request.strength:+.2f} | Temp {temperature:.2f}"
             )
             for trial_idx, trial_seed in enumerate(trial_seeds, start=1):
                 control_text = controls_by_trial[trial_idx - 1]
@@ -485,7 +500,7 @@ def steer(
                 records.append(
                     build_trial_record(
                         args=args,
-                        concept=concept,
+                        concept=request.concept,
                         layers=request.layers,
                         strength=request.strength,
                         temperature=temperature,
@@ -504,6 +519,14 @@ def main() -> None:
     available_concepts = sorted(steering_vectors.keys())
     concept_names = args.concepts or available_concepts
 
+    # Validate all requested concepts exist
+    missing_concepts = [c for c in concept_names if c not in steering_vectors]
+    if missing_concepts:
+        raise ValueError(
+            f"Requested concepts {missing_concepts} not found. "
+            f"Available: {available_concepts}"
+        )
+
     tokenizer, model = load_model(
         model_name=args.model_name,
         dtype=resolve_torch_dtype(args.dtype_name),
@@ -512,22 +535,15 @@ def main() -> None:
     )
     template_prompt = prepare_prompt(tokenizer, model.device)
 
-    records: list[dict[str, Any]] = []
-    concepts_evaluated: list[str] = []
-
-    for concept in concept_names:
-        concepts_evaluated.append(concept)
-        concept_vectors = steering_vectors[concept]
-        print(f"=== Concept: {concept} ===")
-        concept_records = steer(
-            args=args,
-            concept=concept,
-            concept_vectors=concept_vectors,
-            tokenizer=tokenizer,
-            model=model,
-            template_prompt=template_prompt,
-        )
-        records.extend(concept_records)
+    print(f"=== Evaluating concepts: {concept_names} ===")
+    records = steer(
+        args=args,
+        concept_names=concept_names,
+        all_steering_vectors=steering_vectors,
+        tokenizer=tokenizer,
+        model=model,
+        template_prompt=template_prompt,
+    )
 
     args.json_path.parent.mkdir(parents=True, exist_ok=True)
     experiment_summary = {
@@ -552,7 +568,7 @@ def main() -> None:
             "layers": args.layers,
             "concepts_requested": args.concepts,
         },
-        "concepts_evaluated": concepts_evaluated,
+        "concepts_evaluated": concept_names,
         "results": records,
     }
     with args.json_path.open("w", encoding="utf-8") as handle:

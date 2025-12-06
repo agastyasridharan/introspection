@@ -17,13 +17,14 @@ def create_layer_effect_plot(  # pyright: ignore[reportUnknownVariableType]
     df: pd.DataFrame,
 ) -> go.Figure:
     """Create a plot showing score vs layer percentage across model scales."""
-    agg = analysis.aggregate_scores(df)  # pyright: ignore[reportUnknownVariableType]
-
-    # Filter to just the main grader prompt (first one if multiple exist)
-    grader_prompts = agg["grader_prompt"].unique()  # pyright: ignore[reportUnknownMemberType]
-    if len(grader_prompts) > 1:
-        # Use the first grader prompt by default
-        agg = agg[agg["grader_prompt"] == grader_prompts[0]]  # pyright: ignore[reportUnknownVariableType]
+    # Aggregate to get one point per layer/model/condition
+    agg = (
+        df.groupby(  # pyright: ignore[reportUnknownMemberType]
+            ["layer_percentage", "model_scale", "condition"], as_index=False
+        )
+        .agg({"score": "mean"})
+        .rename(columns={"score": "mean_score"})
+    )
 
     # Separate intervention and control conditions
     intervention = agg[agg["condition"] == "intervention"]  # pyright: ignore[reportUnknownVariableType]
@@ -94,7 +95,14 @@ def create_layer_effect_plot(  # pyright: ignore[reportUnknownVariableType]
 
 def create_intervention_vs_control_plot(df: pd.DataFrame) -> go.Figure:
     """Create a plot comparing intervention vs control scores."""
-    agg: pd.DataFrame = analysis.aggregate_scores(df)
+    # Aggregate to get one point per layer/model/condition
+    agg = (
+        df.groupby(  # pyright: ignore[reportUnknownMemberType]
+            ["layer_percentage", "model_scale", "condition"], as_index=False
+        )
+        .agg({"score": "mean"})
+        .rename(columns={"score": "mean_score"})
+    )
 
     # Pivot to get intervention and control side by side
     pivot: pd.DataFrame = agg.pivot_table(  # pyright: ignore[reportUnknownMemberType]
@@ -134,7 +142,14 @@ def create_intervention_vs_control_plot(df: pd.DataFrame) -> go.Figure:
 
 def create_heatmap_plot(df: pd.DataFrame) -> go.Figure:
     """Create a heatmap of scores across layer and model scale."""
-    agg: pd.DataFrame = analysis.aggregate_scores(df)
+    # Aggregate to get one point per layer/model/condition
+    agg = (
+        df.groupby(  # pyright: ignore[reportUnknownMemberType]
+            ["layer_percentage", "model_scale", "condition"], as_index=False
+        )
+        .agg({"score": "mean"})
+        .rename(columns={"score": "mean_score"})
+    )
 
     # Filter to intervention condition only
     intervention: pd.DataFrame = agg[agg["condition"] == "intervention"]
