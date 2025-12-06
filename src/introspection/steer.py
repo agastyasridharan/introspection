@@ -466,17 +466,16 @@ def steer(
     records: list[dict[str, Any]] = []
     for request_idx, request in enumerate(base_requests):
         for temperature in args.temperatures:
-            controls_by_request, interventions_by_request = temperature_results[
+            controls_by_trial, interventions_by_request = temperature_results[
                 temperature
             ]
-            control_trials = controls_by_request[request_idx]
             intervention_trials = interventions_by_request[request_idx]
             print(
                 f"-- Layers [{request.layer_label}] | Strength {request.strength:+.2f} | "
                 f"Temp {temperature:.2f}"
             )
             for trial_idx, trial_seed in enumerate(trial_seeds, start=1):
-                control_text = control_trials[trial_idx - 1]
+                control_text = controls_by_trial[trial_idx - 1]
                 intervention_text = intervention_trials[trial_idx - 1]
                 print(f"  Trial {trial_idx} Control: {control_text}")
                 print(
