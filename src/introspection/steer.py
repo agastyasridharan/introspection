@@ -8,6 +8,7 @@ from typing import Any, Sequence, cast
 
 import torch
 from torch import cuda as torch_cuda
+from tqdm import tqdm
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
@@ -136,7 +137,7 @@ def prepare_prompt(
         formatted_prompt=formatted_prompt,
         marker=TRIAL_MARKER,
     )
-    print(
+    tqdm.write(
         formatted_prompt[:char_offset]
         + "\033[38;5;208m"
         + formatted_prompt[char_offset : char_offset + 1]
@@ -204,6 +205,10 @@ def generate_batched_responses(
     }
     if min_p > 0.0:
         generate_kwargs["min_p"] = min_p
+    tqdm.write(
+        f"Forward pass: input_ids={list(input_ids.shape)}, "
+        f"attention_mask={list(attention_mask.shape)}, batch_size={batch_size}"
+    )
     sequences = cast(
         torch.Tensor,
         model.generate(**generate_kwargs),  # pyright: ignore[reportCallIssue]
@@ -401,7 +406,7 @@ def steer(
     # Validate layers exist for all concepts
     first_concept = concept_names[0]
     available_layers = sorted(all_steering_vectors[first_concept].keys())
-    print(f"Available layers: {', '.join(str(idx) for idx in available_layers)}")
+    tqdm.write(f"Available layers: {', '.join(str(idx) for idx in available_layers)}")
     requested_layers = args.layers
     unique_layers = list(dict.fromkeys(requested_layers))
     missing_layers = [layer for layer in unique_layers if layer not in available_layers]
@@ -426,7 +431,7 @@ def steer(
                     )
                 )
 
-    print(
+    tqdm.write(
         f"Batching {len(concept_names)} concepts × {len(unique_layers)} layers × "
         f"{len(args.strengths)} strengths = {len(base_requests)} interventions per trial"
     )
@@ -436,64 +441,70 @@ def steer(
     # interventions_by_request: one list per (concept, layer, strength) combination
     temperature_results: dict[float, tuple[list[str], list[list[str]]]] = {}
 
-    for temperature in args.temperatures:
-        controls_by_trial: list[str] = []
-        interventions_by_request: list[list[str]] = [[] for _ in base_requests]
-        for trial_seed in trial_seeds:
-            # Generate single control response (no steering)
-            set_random_seed(trial_seed)
-            control_responses = generate_batched_responses(
-                model=model,
-                tokenizer=tokenizer,
-                prompt=template_prompt,
-                batch_size=1,
-                max_new_tokens=args.max_new_tokens,
-                temperature=temperature,
-                top_p=args.top_p,
-                top_k=args.top_k,
-                min_p=args.min_p,
-                do_sample=args.do_sample,
+    total_iterations = len(args.temperatures) * len(trial_seeds)
+    with tqdm(total=total_iterations, desc="Running trials", unit="trial") as pbar:
+        for temperature in args.temperatures:
+            controls_by_trial: list[str] = []
+            interventions_by_request: list[list[str]] = [[] for _ in base_requests]
+            for trial_seed in trial_seeds:
+                pbar.set_postfix(temp=f"{temperature:.2f}", seed=trial_seed)
+                # Generate single control response (no steering)
+                set_random_seed(trial_seed)
+                control_responses = generate_batched_responses(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prompt=template_prompt,
+                    batch_size=1,
+                    max_new_tokens=args.max_new_tokens,
+                    temperature=temperature,
+                    top_p=args.top_p,
+                    top_k=args.top_k,
+                    min_p=args.min_p,
+                    do_sample=args.do_sample,
+                )
+                controls_by_trial.append(control_responses[0])
+                # Generate batched interventions (one per concept/layer/strength)
+                interventions = run_batched_interventions(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prompt=template_prompt,
+                    all_steering_vectors=all_steering_vectors,
+                    requests=base_requests,
+                    max_new_tokens=args.max_new_tokens,
+                    temperature=temperature,
+                    top_p=args.top_p,
+                    top_k=args.top_k,
+                    min_p=args.min_p,
+                    do_sample=args.do_sample,
+                    seed=trial_seed,
+                    debug_residual=args.debug_residual,
+                )
+                for request_idx, text in enumerate(interventions):
+                    interventions_by_request[request_idx].append(text)
+                pbar.update(1)
+            temperature_results[temperature] = (
+                controls_by_trial,
+                interventions_by_request,
             )
-            controls_by_trial.append(control_responses[0])
-            # Generate batched interventions (one per concept/layer/strength)
-            interventions = run_batched_interventions(
-                model=model,
-                tokenizer=tokenizer,
-                prompt=template_prompt,
-                all_steering_vectors=all_steering_vectors,
-                requests=base_requests,
-                max_new_tokens=args.max_new_tokens,
-                temperature=temperature,
-                top_p=args.top_p,
-                top_k=args.top_k,
-                min_p=args.min_p,
-                do_sample=args.do_sample,
-                seed=trial_seed,
-                debug_residual=args.debug_residual,
-            )
-            for request_idx, text in enumerate(interventions):
-                interventions_by_request[request_idx].append(text)
-        temperature_results[temperature] = (
-            controls_by_trial,
-            interventions_by_request,
-        )
 
     records: list[dict[str, Any]] = []
-    for request_idx, request in enumerate(base_requests):
+    for request_idx, request in tqdm(
+        enumerate(base_requests), total=len(base_requests), desc="Building records"
+    ):
         for temperature in args.temperatures:
             controls_by_trial, interventions_by_request = temperature_results[
                 temperature
             ]
             intervention_trials = interventions_by_request[request_idx]
-            print(
+            tqdm.write(
                 f"-- Concept [{request.concept}] | Layer [{request.layer_label}] | "
                 f"Strength {request.strength:+.2f} | Temp {temperature:.2f}"
             )
             for trial_idx, trial_seed in enumerate(trial_seeds, start=1):
                 control_text = controls_by_trial[trial_idx - 1]
                 intervention_text = intervention_trials[trial_idx - 1]
-                print(f"  Trial {trial_idx} Control: {control_text}")
-                print(
+                tqdm.write(f"  Trial {trial_idx} Control: {control_text}")
+                tqdm.write(
                     f"  Trial {trial_idx} Intervention (strength {request.strength:+.2f}): "
                     f"{intervention_text}\n"
                 )
@@ -535,7 +546,7 @@ def main() -> None:
     )
     template_prompt = prepare_prompt(tokenizer, model.device)
 
-    print(f"=== Evaluating concepts: {concept_names} ===")
+    tqdm.write(f"=== Evaluating concepts: {concept_names} ===")
     records = steer(
         args=args,
         concept_names=concept_names,
