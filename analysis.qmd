@@ -11,12 +11,50 @@ This document visualizes how each grader prompt's scores vary across different l
 # | warning: false
 from introspection.analysis import load_and_process_data, aggregate_scores
 
+import pandas as pd
 import inspect_viz as viz
 from inspect_viz import input, layout
 from inspect_viz.mark import dot, line
 from inspect_viz.plot import plot, legend
+
 df = load_and_process_data("logs/")
 df_agg = aggregate_scores(df)
+```
+
+## Data Summary
+
+```{python}
+# | echo: false
+print(f"Total samples: {len(df):,}")
+print(f"Unique concepts: {df['concept'].nunique()}")
+print()
+
+# Summary by model scale
+print("=== By Model Scale ===")
+model_summary = df.groupby("model_scale").agg(
+    samples=("score", "count"),
+    layers=("layer_index", lambda x: sorted(x.unique().tolist())),
+).reset_index()
+for _, row in model_summary.iterrows():
+    print(f"  {row['model_scale']}: {row['samples']:,} samples, layers {row['layers']}")
+print()
+
+# Summary by strength
+print("=== By Strength ===")
+for strength, count in df["strength"].value_counts().sort_index().items():
+    print(f"  {strength}: {count:,} samples")
+print()
+
+# Summary by temperature
+print("=== By Temperature ===")
+for temp, count in df["temperature"].value_counts().sort_index().items():
+    print(f"  {temp}: {count:,} samples")
+print()
+
+# Concepts list
+print("=== Concepts ===")
+concepts = sorted(df["concept"].unique())
+print(f"  {concepts}")
 ```
 
 ## Interactive Visualization
@@ -103,18 +141,18 @@ the_plot = plot(
     ),
     x_label="Layer Percentage",
     y_label="Mean Score",
-    width=1200,
-    height=700,
+    width=2000,
+    height=1200,
     margin_left=60,
     margin_top=40,
     margin_right=40,
-    margin_bottom=40,
-    legend=legend("color", frame_anchor="bottom-right", border=False, inset=20),
+    margin_bottom=120,
+    legend=legend("color", frame_anchor="bottom", columns=2, border=False),
     grid=True,
     y_domain=[0, 1.0],
     x_domain=[0, 100],
     color_domain="fixed",
-    style={"fontSize": "16px"},
+    style={"fontSize": "20px"},
 )
 
 # Combine filters and plot into single layout for display

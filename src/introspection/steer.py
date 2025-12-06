@@ -83,7 +83,8 @@ def compute_injection_index(
     tokenizer: PreTrainedTokenizerBase,
     formatted_prompt: str,
     marker: str,
-) -> int:
+) -> tuple[int, int]:
+    """Returns (token_index, char_offset) for the injection point."""
     encoded_offsets = tokenizer(
         formatted_prompt,
         return_offsets_mapping=True,
@@ -97,7 +98,9 @@ def compute_injection_index(
             break
     if token_index is None:
         raise ValueError("Marker not found in offsets.")
-    return max(token_index - 1, 0)
+    injection_token = max(token_index - 1, 0)
+    char_offset = offsets_list[injection_token][0]
+    return injection_token, char_offset
 
 
 def prepare_prompt(
@@ -124,32 +127,23 @@ def prepare_prompt(
         attention_mask = attention_mask_value
     else:
         attention_mask = torch.ones_like(input_ids, device=device)
-    injection_index = compute_injection_index(
+    injection_index, char_offset = compute_injection_index(
         tokenizer=tokenizer,
         formatted_prompt=formatted_prompt,
         marker=TRIAL_MARKER,
     )
     print(
-        formatted_prompt[:injection_index]
+        formatted_prompt[:char_offset]
         + "\033[38;5;208m"
-        + formatted_prompt[injection_index : injection_index + 1]
+        + formatted_prompt[char_offset : char_offset + 1]
         + "\033[0m"
-        + formatted_prompt[injection_index + 1 :]
+        + formatted_prompt[char_offset + 1 :]
     )
     return PromptSetup(
         input_ids=input_ids,
         attention_mask=attention_mask,
         formatted_prompt=formatted_prompt,
         injection_index=injection_index,
-    )
-
-
-def clone_prompt(prompt: PromptSetup) -> PromptSetup:
-    return PromptSetup(
-        input_ids=prompt.input_ids.clone(),
-        attention_mask=prompt.attention_mask.clone(),
-        formatted_prompt=prompt.formatted_prompt,
-        injection_index=prompt.injection_index,
     )
 
 
@@ -368,7 +362,7 @@ def parse_args() -> ExperimentArgs:
     parser.add_argument(
         "--json-path",
         type=Path,
-        default=None,
+        required=True,
         help="File to write JSON trial outputs to.",
     )
     parsed = parser.parse_args()
@@ -404,6 +398,12 @@ def steer(
     print(f"Available layers: {', '.join(str(idx) for idx in available_layers)}")
     requested_layers = args.layers
     unique_layers = list(dict.fromkeys(requested_layers))
+    missing_layers = [layer for layer in unique_layers if layer not in concept_vectors]
+    if missing_layers:
+        raise ValueError(
+            f"Requested layers {missing_layers} not found in steering vectors. "
+            f"Available: {available_layers}"
+        )
     base_requests: list[BatchedInterventionRequest] = []
     for layer_idx in unique_layers:
         layer_label = str(layer_idx)
@@ -417,19 +417,21 @@ def steer(
             )
 
     trial_seeds = [args.seed + idx for idx in range(args.trials)]
-    temperature_results: dict[float, tuple[list[list[str]], list[list[str]]]] = {}
+    # controls_by_trial: one control per trial (not per layer/strength)
+    # interventions_by_request: one list per (layer, strength) combination
+    temperature_results: dict[float, tuple[list[str], list[list[str]]]] = {}
 
     for temperature in args.temperatures:
-        controls_by_request: list[list[str]] = [[] for _ in base_requests]
+        controls_by_trial: list[str] = []
         interventions_by_request: list[list[str]] = [[] for _ in base_requests]
         for trial_seed in trial_seeds:
-            prompt_for_trial = clone_prompt(template_prompt)
+            # Generate single control response (no steering, so layer/strength don't matter)
             set_random_seed(trial_seed)
-            control_batch = generate_batched_responses(
+            control_responses = generate_batched_responses(
                 model=model,
                 tokenizer=tokenizer,
-                prompt=prompt_for_trial,
-                batch_size=len(base_requests),
+                prompt=template_prompt,
+                batch_size=1,
                 max_new_tokens=args.max_new_tokens,
                 temperature=temperature,
                 top_p=args.top_p,
@@ -437,12 +439,12 @@ def steer(
                 min_p=args.min_p,
                 do_sample=args.do_sample,
             )
-            for request_idx, text in enumerate(control_batch):
-                controls_by_request[request_idx].append(text)
+            controls_by_trial.append(control_responses[0])
+            # Generate batched interventions (one per layer/strength combination)
             interventions = run_batched_interventions(
                 model=model,
                 tokenizer=tokenizer,
-                prompt=prompt_for_trial,
+                prompt=template_prompt,
                 concept_vectors=concept_vectors,
                 requests=base_requests,
                 max_new_tokens=args.max_new_tokens,
@@ -457,7 +459,7 @@ def steer(
             for request_idx, text in enumerate(interventions):
                 interventions_by_request[request_idx].append(text)
         temperature_results[temperature] = (
-            controls_by_request,
+            controls_by_trial,
             interventions_by_request,
         )
 

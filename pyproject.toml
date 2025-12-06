@@ -12,6 +12,7 @@ dependencies = [
     "inspect-viz>=0.3.4",
     "matplotlib>=3.10.7",
     "openai>=2.8.1",
+    "plotly>=6.5.0",
     "quarto-cli>=1.8.26",
     "seaborn>=0.13.2",
     "torch>=2.9.0",
@@ -42,7 +43,7 @@ reportMissingImports = "error"
 reportAny = false # any is worth the convenience sometimes
 reportExplicitAny = false
 reportPrivateUsage = false # worth it for testing private functions
-allowedUntypedLibraries = ["datasets", "tqdm", "statsmodels", "timeout_decorator", "transformers"]
+allowedUntypedLibraries = ["datasets", "plotly", "tqdm", "statsmodels", "timeout_decorator", "transformers"]
 
 executionEnvironments = [
   { root = "tests", reportPrivateUsage = false, reportMissingTypeStubs = false },

@@ -15,7 +15,7 @@ from introspection.grader_prompts import GRADER_PROMPTS, get_grader_prompt
 def load_samples(data_dir: Path) -> list[Sample]:
     samples: list[Sample] = []
 
-    for sweep_path in data_dir.glob("**/sweep.json"):
+    for sweep_path in data_dir.glob("**/sweep*.json"):
         payload = json.loads(sweep_path.read_text())
         prompt_block = payload["prompt"]
         question = prompt_block["formatted"].strip()
@@ -77,7 +77,7 @@ def grade_responses(
     samples = load_samples(Path(data_dir))
     dataset = MemoryDataset(samples, name="steering_responses")
     model = inspect_ai.model.get_model()
-    grade_pattern = r"(?i)\b(YES|NO)\b"
+    grade_pattern = r"(?i)GRADE:\s*(YES|NO)"
     prompt_names = list(GRADER_PROMPTS.keys())
     scorers: list[Scorer] = []
     for prompt_name in prompt_names:
@@ -92,5 +92,6 @@ def grade_responses(
 
     return Task(
         dataset=dataset,
+        solver=[],
         scorer=scorers,
     )
