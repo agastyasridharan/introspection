@@ -22,6 +22,7 @@ class ExperimentArgs:
     do_sample: bool
     seed: int
     debug_residual: bool
+    max_batch_size: int | None
 
 
 @dataclass

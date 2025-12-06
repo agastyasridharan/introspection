@@ -267,6 +267,69 @@ def run_batched_interventions(
             hook.remove()
 
 
+def run_batched_interventions_chunked(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    prompt: PromptSetup,
+    all_steering_vectors: dict[str, dict[int, torch.Tensor]],
+    requests: Sequence[BatchedInterventionRequest],
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    min_p: float,
+    do_sample: bool,
+    seed: int,
+    debug_residual: bool,
+    max_batch_size: int | None,
+) -> list[str]:
+    """Run batched interventions, chunking into smaller batches if max_batch_size is set."""
+    if max_batch_size is None or len(requests) <= max_batch_size:
+        return run_batched_interventions(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            all_steering_vectors=all_steering_vectors,
+            requests=requests,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            do_sample=do_sample,
+            seed=seed,
+            debug_residual=debug_residual,
+        )
+
+    all_outputs: list[str] = []
+    num_chunks = (len(requests) + max_batch_size - 1) // max_batch_size
+    for chunk_idx in range(num_chunks):
+        start = chunk_idx * max_batch_size
+        end = min(start + max_batch_size, len(requests))
+        chunk = requests[start:end]
+        tqdm.write(
+            f"  Processing chunk {chunk_idx + 1}/{num_chunks} "
+            f"(requests {start + 1}-{end} of {len(requests)})"
+        )
+        chunk_outputs = run_batched_interventions(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            all_steering_vectors=all_steering_vectors,
+            requests=chunk,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            do_sample=do_sample,
+            seed=seed,
+            debug_residual=debug_residual,
+        )
+        all_outputs.extend(chunk_outputs)
+    return all_outputs
+
+
 def parse_args() -> ExperimentArgs:
     parser = argparse.ArgumentParser(
         description="Run control and intervention trials for steering vectors."
@@ -369,6 +432,12 @@ def parse_args() -> ExperimentArgs:
         help="Print a one-time diagnostic confirming residual stream injection per layer.",
     )
     parser.add_argument(
+        "--max-batch-size",
+        type=int,
+        default=None,
+        help="Maximum batch size for interventions. If not set, all interventions run in one batch.",
+    )
+    parser.add_argument(
         "--json-path",
         type=Path,
         required=True,
@@ -392,6 +461,7 @@ def parse_args() -> ExperimentArgs:
         do_sample=(not parsed.no_sample),
         seed=parsed.seed,
         debug_residual=parsed.debug_residual,
+        max_batch_size=parsed.max_batch_size,
     )
 
 
@@ -464,7 +534,7 @@ def steer(
                 )
                 controls_by_trial.append(control_responses[0])
                 # Generate batched interventions (one per concept/layer/strength)
-                interventions = run_batched_interventions(
+                interventions = run_batched_interventions_chunked(
                     model=model,
                     tokenizer=tokenizer,
                     prompt=template_prompt,
@@ -478,6 +548,7 @@ def steer(
                     do_sample=args.do_sample,
                     seed=trial_seed,
                     debug_residual=args.debug_residual,
+                    max_batch_size=args.max_batch_size,
                 )
                 for request_idx, text in enumerate(interventions):
                     interventions_by_request[request_idx].append(text)
@@ -578,6 +649,7 @@ def main() -> None:
             "seed": args.seed,
             "layers": args.layers,
             "concepts_requested": args.concepts,
+            "max_batch_size": args.max_batch_size,
         },
         "concepts_evaluated": concept_names,
         "results": records,

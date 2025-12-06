@@ -3,258 +3,114 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from introspection import analysis
 
 
-def create_layer_effect_plot(  # pyright: ignore[reportUnknownVariableType]
-    df: pd.DataFrame,
-) -> go.Figure:
-    """Create a plot showing score vs layer percentage across model scales."""
-    # Aggregate to get one point per layer/model/condition
-    agg = (
-        df.groupby(  # pyright: ignore[reportUnknownMemberType]
-            ["layer_percentage", "model_scale", "condition"], as_index=False
-        )
-        .agg({"score": "mean"})
-        .rename(columns={"score": "mean_score"})
-    )
+def create_interactive_dashboard(df: pd.DataFrame, output_path: Path) -> None:
+    """Create a full HTML dashboard with dropdown filters."""
+    # Create a sample identifier for joining coherent scores
+    sample_cols = [
+        "layer_percentage",
+        "model_scale",
+        "condition",
+        "strength",
+        "concept",
+        "trial",
+    ]
 
-    # Separate intervention and control conditions
-    intervention = agg[agg["condition"] == "intervention"]  # pyright: ignore[reportUnknownVariableType]
-    control = agg[agg["condition"] == "control"]  # pyright: ignore[reportUnknownVariableType]
-
-    fig = make_subplots(
-        rows=1,
-        cols=2,
-        subplot_titles=["Intervention (Steered)", "Control (Baseline)"],
-        shared_yaxes=True,
-    )
-
-    # Define a nice color palette for model scales
-    color_map = {
-        "8B": "#636EFA",
-        "14B": "#EF553B",
-        "32B": "#00CC96",
-        "235B": "#AB63FA",
-    }
-
-    for model_scale in sorted(intervention["model_scale"].unique()):  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
-        model_data = intervention[intervention["model_scale"] == model_scale]  # pyright: ignore[reportUnknownVariableType]
-        color = color_map.get(model_scale, "#666666")
-        fig.add_trace(
-            go.Scatter(
-                x=model_data["layer_percentage"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
-                y=model_data["mean_score"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
-                mode="lines+markers",
-                name=f"{model_scale}",
-                line={"color": color},
-                marker={"size": 8},
-                legendgroup=model_scale,
-                showlegend=True,
-            ),
-            row=1,
-            col=1,
-        )
-
-    for model_scale in sorted(control["model_scale"].unique()):  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
-        model_data = control[control["model_scale"] == model_scale]  # pyright: ignore[reportUnknownVariableType]
-        color = color_map.get(model_scale, "#666666")
-        fig.add_trace(
-            go.Scatter(
-                x=model_data["layer_percentage"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
-                y=model_data["mean_score"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
-                mode="lines+markers",
-                name=f"{model_scale}",
-                line={"color": color, "dash": "dash"},
-                marker={"size": 8},
-                legendgroup=model_scale,
-                showlegend=False,
-            ),
-            row=1,
-            col=2,
-        )
-
-    fig.update_layout(
-        title="Effect of Steering by Layer Position",
-        height=500,
-        legend_title="Model Scale",
-    )
-    fig.update_xaxes(title_text="Layer Position (%)", row=1, col=1)
-    fig.update_xaxes(title_text="Layer Position (%)", row=1, col=2)
-    fig.update_yaxes(title_text="Mean Score", row=1, col=1)
-
-    return fig
-
-
-def create_intervention_vs_control_plot(df: pd.DataFrame) -> go.Figure:
-    """Create a plot comparing intervention vs control scores."""
-    # Aggregate to get one point per layer/model/condition
-    agg = (
-        df.groupby(  # pyright: ignore[reportUnknownMemberType]
-            ["layer_percentage", "model_scale", "condition"], as_index=False
-        )
-        .agg({"score": "mean"})
-        .rename(columns={"score": "mean_score"})
-    )
-
-    # Pivot to get intervention and control side by side
-    pivot: pd.DataFrame = agg.pivot_table(  # pyright: ignore[reportUnknownMemberType]
-        index=["layer_percentage", "model_scale"],
-        columns="condition",
-        values="mean_score",
-        aggfunc="mean",
+    # Pivot the data so each sample has columns for each grader_prompt score
+    pivot_df = df.pivot_table(  # pyright: ignore[reportUnknownMemberType]
+        index=sample_cols,
+        columns="grader_prompt",
+        values="score",
+        aggfunc="first",
     ).reset_index()
 
-    fig = px.scatter(
-        pivot,
-        x="control",
-        y="intervention",
-        color="model_scale",
-        hover_data=["layer_percentage"],
-        labels={
-            "control": "Control Score",
-            "intervention": "Intervention Score",
-            "model_scale": "Model Scale",
-        },
-        title="Intervention vs Control Performance",
+    # Get grader prompts (excluding coherent_response for plotting)
+    all_grader_prompts = [
+        c
+        for c in pivot_df.columns
+        if c not in sample_cols  # pyright: ignore[reportUnknownMemberType]
+    ]
+    plot_grader_prompts = [g for g in all_grader_prompts if g != "coherent_response"]
+
+    # Create two versions of aggregated data:
+    # 1. Raw scores (no coherent filter)
+    # 2. Coherent-filtered scores (only count if coherent_response == 1)
+
+    # For raw data - aggregate each grader prompt independently
+    raw_agg_list: list[pd.DataFrame] = []
+    for grader in plot_grader_prompts:
+        temp = pivot_df[sample_cols + [grader]].copy()  # pyright: ignore[reportUnknownMemberType]
+        temp = temp.dropna(subset=[grader])  # pyright: ignore[reportUnknownMemberType]
+        grouped = temp.groupby(  # pyright: ignore[reportUnknownMemberType]
+            ["layer_percentage", "model_scale", "condition", "strength"],
+            as_index=False,
+        ).agg({grader: "mean"})
+        grouped["grader_prompt"] = grader
+        grouped = grouped.rename(columns={grader: "mean_score"})
+        raw_agg_list.append(grouped)  # pyright: ignore[reportUnknownMemberType]
+
+    raw_agg = pd.concat(raw_agg_list, ignore_index=True)  # pyright: ignore[reportUnknownArgumentType]
+
+    # For coherent-filtered data - score = grader_score AND coherent_score
+    # (non-coherent samples count as 0 for other grader prompts)
+    coherent_filtered_list: list[pd.DataFrame] = []
+    if "coherent_response" in pivot_df.columns:
+        for grader in plot_grader_prompts:
+            temp = pivot_df[sample_cols + [grader, "coherent_response"]].copy()  # pyright: ignore[reportUnknownMemberType]
+            temp = temp.dropna(subset=[grader])  # pyright: ignore[reportUnknownMemberType]
+            if len(temp) == 0:
+                continue
+            # Compute AND: score is 1 only if both grader and coherent are 1
+            temp["combined_score"] = (temp[grader] * temp["coherent_response"]).astype(
+                float
+            )  # pyright: ignore[reportUnknownMemberType]
+            grouped = temp.groupby(  # pyright: ignore[reportUnknownMemberType]
+                ["layer_percentage", "model_scale", "condition", "strength"],
+                as_index=False,
+            ).agg({"combined_score": "mean"})
+            grouped["grader_prompt"] = grader
+            grouped = grouped.rename(columns={"combined_score": "mean_score"})
+            coherent_filtered_list.append(grouped)  # pyright: ignore[reportUnknownMemberType]
+
+        coherent_agg = pd.concat(coherent_filtered_list, ignore_index=True)  # pyright: ignore[reportUnknownArgumentType]
+    else:
+        coherent_agg = raw_agg.copy()
+
+    # Convert to JSON-serializable format
+    raw_records = raw_agg.to_dict(orient="records")  # pyright: ignore[reportUnknownMemberType]
+    coherent_records = coherent_agg.to_dict(orient="records")  # pyright: ignore[reportUnknownMemberType]
+
+    # Get unique values for dropdowns
+    conditions = sorted(df["condition"].unique().tolist())  # pyright: ignore[reportUnknownMemberType]
+    model_scales = sorted(
+        df["model_scale"].unique().tolist(),  # pyright: ignore[reportUnknownMemberType]
+        key=lambda x: float(x.replace("B", "")),
     )
-
-    # Add diagonal reference line
-    fig.add_shape(
-        type="line",
-        x0=0,
-        y0=0,
-        x1=1,
-        y1=1,
-        line={"color": "gray", "dash": "dash"},
-    )
-
-    fig.update_layout(height=500)
-    return fig
-
-
-def create_heatmap_plot(df: pd.DataFrame) -> go.Figure:
-    """Create a heatmap of scores across layer and model scale."""
-    # Aggregate to get one point per layer/model/condition
-    agg = (
-        df.groupby(  # pyright: ignore[reportUnknownMemberType]
-            ["layer_percentage", "model_scale", "condition"], as_index=False
-        )
-        .agg({"score": "mean"})
-        .rename(columns={"score": "mean_score"})
-    )
-
-    # Filter to intervention condition only
-    intervention: pd.DataFrame = agg[agg["condition"] == "intervention"]
-
-    # Pivot for heatmap
-    pivot: pd.DataFrame = intervention.pivot_table(  # pyright: ignore[reportUnknownMemberType]
-        index="model_scale",
-        columns="layer_percentage",
-        values="mean_score",
-        aggfunc="mean",
-    )
-
-    # Sort model scales by size
-    scale_order = ["8B", "14B", "32B", "235B"]
-    existing_scales = [s for s in scale_order if s in pivot.index]
-    pivot = pivot.reindex(existing_scales)
-
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=pivot.values,
-            x=[f"{int(x)}%" for x in pivot.columns],
-            y=pivot.index.tolist(),
-            colorscale="RdYlGn",
-            zmin=0,
-            zmax=1,
-            colorbar={"title": "Mean Score"},
-        )
-    )
-
-    fig.update_layout(
-        title="Score Heatmap: Model Scale × Layer Position (Intervention)",
-        xaxis_title="Layer Position",
-        yaxis_title="Model Scale",
-        height=400,
-    )
-
-    return fig
-
-
-def create_concept_analysis_plot(df: pd.DataFrame) -> go.Figure:
-    """Create a plot showing per-concept performance."""
-    # Group by concept and condition
-    concept_scores: pd.DataFrame = (
-        df.groupby(["concept", "condition"])["score"].mean().reset_index()  # pyright: ignore[reportUnknownMemberType]
-    )
-
-    # Pivot for easier plotting
-    pivot = concept_scores.pivot(
-        index="concept", columns="condition", values="score"
-    ).reset_index()
-
-    # Sort by intervention score
-    if "intervention" in pivot.columns:
-        pivot = pivot.sort_values("intervention", ascending=True)
-
-    fig = go.Figure()
-
-    if "intervention" in pivot.columns:
-        fig.add_trace(
-            go.Bar(
-                y=pivot["concept"],
-                x=pivot["intervention"],
-                name="Intervention",
-                orientation="h",
-                marker_color="#636EFA",
-            )
-        )
-
-    if "control" in pivot.columns:
-        fig.add_trace(
-            go.Bar(
-                y=pivot["concept"],
-                x=pivot["control"],
-                name="Control",
-                orientation="h",
-                marker_color="#EF553B",
-                opacity=0.7,
-            )
-        )
-
-    fig.update_layout(
-        title="Score by Concept",
-        xaxis_title="Mean Score",
-        yaxis_title="Concept",
-        barmode="overlay",
-        height=max(400, len(pivot) * 20),
-        legend={"yanchor": "bottom", "y": 0.01, "xanchor": "right", "x": 0.99},
-    )
-
-    return fig
-
-
-def create_full_dashboard(df: pd.DataFrame, output_path: Path) -> None:
-    """Create a full HTML dashboard with all plots."""
-    # Create individual plots
-    layer_plot = create_layer_effect_plot(df)
-    comparison_plot = create_intervention_vs_control_plot(df)
-    heatmap_plot = create_heatmap_plot(df)
-    concept_plot = create_concept_analysis_plot(df)
+    strengths = sorted(df["strength"].unique().tolist())  # pyright: ignore[reportUnknownMemberType]
 
     # Calculate stats
     intervention_score = df[df["condition"] == "intervention"]["score"].mean()
     control_score = df[df["condition"] == "control"]["score"].mean()
 
-    # Create combined HTML
+    # Color palette for grader prompts
+    colors = [
+        "#636EFA",
+        "#EF553B",
+        "#00CC96",
+        "#AB63FA",
+        "#FFA15A",
+        "#19D3F3",
+        "#FF6692",
+        "#B6E880",
+    ]
+
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -272,6 +128,52 @@ def create_full_dashboard(df: pd.DataFrame, output_path: Path) -> None:
             color: #333;
             text-align: center;
             margin-bottom: 30px;
+        }}
+        .controls {{
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+            align-items: center;
+        }}
+        .control-group {{
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }}
+        .control-group label {{
+            font-weight: 600;
+            color: #555;
+            font-size: 14px;
+        }}
+        .control-group select {{
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            min-width: 150px;
+            background: white;
+        }}
+        .checkbox-group {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-top: 20px;
+        }}
+        .checkbox-group input {{
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }}
+        .checkbox-group label {{
+            font-weight: 600;
+            color: #555;
+            font-size: 14px;
+            cursor: pointer;
         }}
         .plot-container {{
             background: white;
@@ -300,6 +202,11 @@ def create_full_dashboard(df: pd.DataFrame, output_path: Path) -> None:
         .stat-label {{
             font-size: 14px;
             color: #666;
+        }}
+        .info {{
+            color: #666;
+            font-size: 13px;
+            margin-top: 10px;
         }}
     </style>
 </head>
@@ -333,33 +240,109 @@ def create_full_dashboard(df: pd.DataFrame, output_path: Path) -> None:
             <div class="stat-label">Control Avg Score</div>
         </div>
     </div>
-    
-    <div class="plot-container">
-        <div id="layer-plot"></div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="condition-select">Condition</label>
+            <select id="condition-select">
+                {"".join(f'<option value="{c}">{c}</option>' for c in conditions)}
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="model-select">Model Size</label>
+            <select id="model-select">
+                {"".join(f'<option value="{m}">{m}</option>' for m in model_scales)}
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="strength-select">Strength</label>
+            <select id="strength-select">
+                {"".join(f'<option value="{s}">{s}</option>' for s in strengths)}
+            </select>
+        </div>
+        <div class="checkbox-group">
+            <input type="checkbox" id="coherent-filter" checked>
+            <label for="coherent-filter">Require coherent response</label>
+        </div>
+        <div class="info">
+            💡 Click legend items to toggle grader prompts on/off
+        </div>
     </div>
     
     <div class="plot-container">
-        <div id="heatmap-plot"></div>
-    </div>
-    
-    <div class="plot-container">
-        <div id="comparison-plot"></div>
-    </div>
-    
-    <div class="plot-container">
-        <div id="concept-plot"></div>
+        <div id="main-plot"></div>
     </div>
     
     <script>
-        var layerPlot = {layer_plot.to_json()};
-        var heatmapPlot = {heatmap_plot.to_json()};
-        var comparisonPlot = {comparison_plot.to_json()};
-        var conceptPlot = {concept_plot.to_json()};
+        // Data with and without coherent filtering
+        const rawData = {json.dumps(raw_records)};
+        const coherentData = {json.dumps(coherent_records)};
+        const graderPrompts = {json.dumps(plot_grader_prompts)};
+        const colors = {json.dumps(colors)};
         
-        Plotly.newPlot('layer-plot', layerPlot.data, layerPlot.layout, {{responsive: true}});
-        Plotly.newPlot('heatmap-plot', heatmapPlot.data, heatmapPlot.layout, {{responsive: true}});
-        Plotly.newPlot('comparison-plot', comparisonPlot.data, comparisonPlot.layout, {{responsive: true}});
-        Plotly.newPlot('concept-plot', conceptPlot.data, conceptPlot.layout, {{responsive: true}});
+        function updatePlot() {{
+            const condition = document.getElementById('condition-select').value;
+            const model = document.getElementById('model-select').value;
+            const strength = document.getElementById('strength-select').value;
+            const requireCoherent = document.getElementById('coherent-filter').checked;
+            
+            // Choose data source based on coherent filter
+            const dataSource = requireCoherent ? coherentData : rawData;
+            
+            // Filter data
+            let filtered = dataSource.filter(d => 
+                d.condition === condition &&
+                d.model_scale === model &&
+                d.strength === parseFloat(strength)
+            );
+            
+            // Group by grader_prompt and create traces
+            const traces = [];
+            graderPrompts.forEach((prompt, i) => {{
+                const promptData = filtered.filter(d => d.grader_prompt === prompt);
+                if (promptData.length === 0) return;
+                
+                // Sort by layer_percentage
+                promptData.sort((a, b) => a.layer_percentage - b.layer_percentage);
+                
+                const x = promptData.map(d => d.layer_percentage);
+                const y = promptData.map(d => d.mean_score);
+                
+                traces.push({{
+                    x: x,
+                    y: y,
+                    mode: 'lines+markers',
+                    name: prompt,
+                    line: {{ color: colors[i % colors.length] }},
+                    marker: {{ size: 6 }}
+                }});
+            }});
+            
+            const coherentLabel = requireCoherent ? ' (coherent only)' : '';
+            const layout = {{
+                title: `Score by Layer Position (${{condition}})${{coherentLabel}}`,
+                xaxis: {{ title: 'Layer Position (%)' }},
+                yaxis: {{ title: 'Mean Score', range: [0, 1] }},
+                height: 600,
+                legend: {{
+                    title: {{ text: 'Grader Prompt' }},
+                    orientation: 'h',
+                    y: -0.2
+                }},
+                hovermode: 'closest'
+            }};
+            
+            Plotly.react('main-plot', traces, layout, {{responsive: true}});
+        }}
+        
+        // Add event listeners
+        document.getElementById('condition-select').addEventListener('change', updatePlot);
+        document.getElementById('model-select').addEventListener('change', updatePlot);
+        document.getElementById('strength-select').addEventListener('change', updatePlot);
+        document.getElementById('coherent-filter').addEventListener('change', updatePlot);
+        
+        // Initial plot
+        updatePlot();
     </script>
 </body>
 </html>
@@ -392,7 +375,7 @@ def main() -> None:
     print(f"Loaded {len(df)} samples")
 
     output_path = Path(args.output)
-    create_full_dashboard(df, output_path)
+    create_interactive_dashboard(df, output_path)
     print(f"\nOpen {output_path} in a web browser to view the interactive dashboard.")
 
 
