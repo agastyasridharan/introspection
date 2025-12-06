@@ -50,8 +50,8 @@ def create_layer_effect_plot(  # pyright: ignore[reportUnknownVariableType]
         color = color_map.get(model_scale, "#666666")
         fig.add_trace(
             go.Scatter(
-                x=model_data["layer_percentage"],  # pyright: ignore[reportUnknownArgumentType]
-                y=model_data["mean_score"],  # pyright: ignore[reportUnknownArgumentType]
+                x=model_data["layer_percentage"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
+                y=model_data["mean_score"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
                 mode="lines+markers",
                 name=f"{model_scale}",
                 line={"color": color},
@@ -68,8 +68,8 @@ def create_layer_effect_plot(  # pyright: ignore[reportUnknownVariableType]
         color = color_map.get(model_scale, "#666666")
         fig.add_trace(
             go.Scatter(
-                x=model_data["layer_percentage"],  # pyright: ignore[reportUnknownArgumentType]
-                y=model_data["mean_score"],  # pyright: ignore[reportUnknownArgumentType]
+                x=model_data["layer_percentage"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
+                y=model_data["mean_score"].tolist(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
                 mode="lines+markers",
                 name=f"{model_scale}",
                 line={"color": color, "dash": "dash"},
