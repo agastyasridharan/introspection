@@ -15,7 +15,7 @@ from introspection.grader_prompts import GRADER_PROMPTS, get_grader_prompt
 def load_samples(data_dir: Path) -> list[Sample]:
     samples: list[Sample] = []
 
-    for sweep_path in data_dir.glob("**/sweep*.json"):
+    for sweep_path in data_dir.glob("**/all_concepts.json"):
         payload = json.loads(sweep_path.read_text())
         prompt_block = payload["prompt"]
         question = prompt_block["formatted"].strip()

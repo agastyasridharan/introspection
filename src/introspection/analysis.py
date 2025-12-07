@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
-from inspect_ai import log
+from inspect_ai.analysis import samples_df
 
 from introspection.constants import MODEL_LAYER_COUNTS
 
@@ -22,57 +22,95 @@ def _extract_model_scale(model_name: str) -> str:
 
 
 def load_and_process_data(logs_dir: str | Path = "logs/") -> pd.DataFrame:
+    """Load eval logs and return a processed DataFrame.
+
+    Uses inspect_ai.analysis.samples_df for efficient parallel loading.
+    """
     logs_path = Path(logs_dir)
-    eval_logs = list(log.list_eval_logs(str(logs_path)))
 
-    if not eval_logs:
-        raise ValueError(f"No eval logs found in {logs_path}")
+    # Load samples using inspect's optimized dataframe loader
+    raw_df: pd.DataFrame = samples_df(  # pyright: ignore[reportUnknownMemberType]
+        str(logs_path),
+        parallel=True,
+        quiet=False,
+    )
 
-    rows: list[dict[str, Any]] = []
-
-    for eval_log in eval_logs:
-        for sample in log.read_eval_log_samples(eval_log):
-            metadata = sample.metadata
-            scores = sample.scores
-            assert scores is not None
-
-            layers = metadata["layers"]
-            assert len(layers) == 1
-            layer_index = layers[0]  # pyright: ignore[reportAttributeAccessIssue]
-
-            model_name = metadata["model_name"]
-            model_scale = _extract_model_scale(model_name)
-            total_layers = MODEL_LAYER_COUNTS[model_name]
-            layer_percentage = (layer_index / (total_layers - 1)) * 100.0  # pyright: ignore[reportAttributeAccessIssue]
-
-            # Pre-extract common metadata once per sample
-            strength = metadata["strength"]
-            temperature = metadata["temperature"]
-            concept = metadata["concept"]
-            condition = metadata["condition"]
-            trial = metadata["trial"]
-
-            for scorer_key, score_data in scores.items():
-                rows.append(
-                    {
-                        "grader_prompt": scorer_key,
-                        "layer_index": layer_index,
-                        "layer_percentage": layer_percentage,
-                        "model_scale": model_scale,
-                        "strength": strength,
-                        "temperature": temperature,
-                        "concept": concept,
-                        "condition": condition,
-                        "score": 1 if score_data.value == "YES" else 0,
-                        "model_name": model_name,
-                        "trial": trial,
-                    }
-                )
-
-    if not rows:
+    if len(raw_df) == 0:
         raise ValueError(f"No samples found in {logs_path}")
 
-    return pd.DataFrame(rows)
+    # Extract layer index from metadata_layers (stored as string like '[10]')
+    raw_df["layer_index"] = raw_df["metadata_layers"].apply(  # pyright: ignore[reportUnknownMemberType]
+        lambda x: ast.literal_eval(x)[0] if isinstance(x, str) else x[0]  # pyright: ignore[reportUnknownLambdaType]
+    )
+
+    # Calculate layer percentage using vectorized operations
+    raw_df["total_layers"] = raw_df["metadata_model_name"].map(MODEL_LAYER_COUNTS)  # pyright: ignore[reportUnknownMemberType]
+    raw_df["layer_percentage"] = (
+        raw_df["layer_index"] / (raw_df["total_layers"] - 1)
+    ) * 100.0  # pyright: ignore[reportUnknownMemberType]
+
+    # Extract model scale
+    raw_df["model_scale"] = raw_df["metadata_model_name"].apply(_extract_model_scale)  # pyright: ignore[reportUnknownMemberType]
+
+    # Get score columns and melt to long format
+    score_cols = [c for c in raw_df.columns if c.startswith("score_")]
+
+    # Build the result dataframe by melting score columns
+    id_vars = [
+        "layer_index",
+        "layer_percentage",
+        "model_scale",
+        "metadata_strength",
+        "metadata_temperature",
+        "metadata_concept",
+        "metadata_condition",
+        "metadata_model_name",
+        "metadata_trial",
+    ]
+
+    melted = raw_df[id_vars + score_cols].melt(  # pyright: ignore[reportUnknownMemberType]
+        id_vars=id_vars,
+        value_vars=score_cols,
+        var_name="grader_prompt",
+        value_name="score_value",
+    )
+
+    # Clean up grader_prompt names (remove "score_" prefix)
+    melted["grader_prompt"] = melted["grader_prompt"].str.replace(
+        "score_", "", regex=False
+    )  # pyright: ignore[reportUnknownMemberType]
+
+    # Convert score values to numeric (YES=1, NO=0)
+    melted["score"] = (melted["score_value"] == "YES").astype(int)  # pyright: ignore[reportUnknownMemberType]
+
+    # Rename columns to match expected format
+    result = melted.rename(  # pyright: ignore[reportUnknownMemberType]
+        columns={
+            "metadata_strength": "strength",
+            "metadata_temperature": "temperature",
+            "metadata_concept": "concept",
+            "metadata_condition": "condition",
+            "metadata_model_name": "model_name",
+            "metadata_trial": "trial",
+        }
+    )
+
+    # Select final columns
+    final_cols = [
+        "grader_prompt",
+        "layer_index",
+        "layer_percentage",
+        "model_scale",
+        "strength",
+        "temperature",
+        "concept",
+        "condition",
+        "score",
+        "model_name",
+        "trial",
+    ]
+
+    return result[final_cols]
 
 
 def aggregate_scores(df: pd.DataFrame) -> pd.DataFrame:

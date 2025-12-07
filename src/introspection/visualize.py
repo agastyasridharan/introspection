@@ -280,6 +280,10 @@ def create_interactive_dashboard(df: pd.DataFrame, output_path: Path) -> None:
         const graderPrompts = {json.dumps(plot_grader_prompts)};
         const colors = {json.dumps(colors)};
         
+        // Track visibility state for each grader prompt (true = visible)
+        const visibilityState = {{}};
+        graderPrompts.forEach(prompt => visibilityState[prompt] = true);
+        
         function updatePlot() {{
             const condition = document.getElementById('condition-select').value;
             const model = document.getElementById('model-select').value;
@@ -313,6 +317,7 @@ def create_interactive_dashboard(df: pd.DataFrame, output_path: Path) -> None:
                     y: y,
                     mode: 'lines+markers',
                     name: prompt,
+                    visible: visibilityState[prompt] ? true : 'legendonly',
                     line: {{ color: colors[i % colors.length] }},
                     marker: {{ size: 6 }}
                 }});
@@ -321,7 +326,7 @@ def create_interactive_dashboard(df: pd.DataFrame, output_path: Path) -> None:
             const coherentLabel = requireCoherent ? ' (coherent only)' : '';
             const layout = {{
                 title: `Score by Layer Position (${{condition}})${{coherentLabel}}`,
-                xaxis: {{ title: 'Layer Position (%)' }},
+                xaxis: {{ title: 'Layer Position (%)', range: [0, 100] }},
                 yaxis: {{ title: 'Mean Score', range: [0, 1] }},
                 height: 600,
                 legend: {{
@@ -335,7 +340,7 @@ def create_interactive_dashboard(df: pd.DataFrame, output_path: Path) -> None:
             Plotly.react('main-plot', traces, layout, {{responsive: true}});
         }}
         
-        // Add event listeners
+        // Add event listeners for dropdowns
         document.getElementById('condition-select').addEventListener('change', updatePlot);
         document.getElementById('model-select').addEventListener('change', updatePlot);
         document.getElementById('strength-select').addEventListener('change', updatePlot);
@@ -343,6 +348,12 @@ def create_interactive_dashboard(df: pd.DataFrame, output_path: Path) -> None:
         
         // Initial plot
         updatePlot();
+        
+        // Listen for legend clicks to track visibility state (must be after initial plot)
+        document.getElementById('main-plot').on('plotly_legendclick', function(data) {{
+            const traceName = data.data[data.curveNumber].name;
+            visibilityState[traceName] = !visibilityState[traceName];
+        }});
     </script>
 </body>
 </html>
