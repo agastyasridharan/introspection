@@ -12,5 +12,4 @@ wheels/
 .env
 analysis_files
 analysis.html
-dashboard.html
 assets
