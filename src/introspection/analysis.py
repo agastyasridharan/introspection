@@ -81,6 +81,7 @@ def load_and_process_data(logs_dir: str | Path = "logs/") -> pd.DataFrame:
     )  # pyright: ignore[reportUnknownMemberType]
 
     # Convert score values to numeric (YES=1, NO=0)
+    melted = melted[~melted["score_value"].isna()]
     melted["score"] = (melted["score_value"] == "YES").astype(int)  # pyright: ignore[reportUnknownMemberType]
 
     # Rename columns to match expected format

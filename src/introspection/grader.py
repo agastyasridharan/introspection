@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from pathlib import Path
 
 import inspect_ai.model
@@ -15,7 +14,7 @@ from introspection.grader_prompts import GRADER_PROMPTS, get_grader_prompt
 def load_samples(data_dir: Path) -> list[Sample]:
     samples: list[Sample] = []
 
-    for sweep_path in data_dir.glob("**/all_concepts.json"):
+    for sweep_path in data_dir.glob("**/*.json"):
         payload = json.loads(sweep_path.read_text())
         prompt_block = payload["prompt"]
         question = prompt_block["formatted"].strip()
@@ -42,20 +41,10 @@ def load_samples(data_dir: Path) -> list[Sample]:
 
             for condition in ("control", "intervention"):
                 response = result[condition]
-                sample_id = (
-                    f"{sweep_path.parent.name}-"
-                    f"{concept}-"
-                    f"trial{result['trial']}-"
-                    f"strength{result['strength']}-"
-                    f"{condition}"
-                    f"-{uuid.uuid4().hex[:6]}"
-                )
-
                 samples.append(
                     Sample(
                         input=question,
                         target="",
-                        id=sample_id,
                         metadata={
                             **base_metadata,
                             "condition": condition,
