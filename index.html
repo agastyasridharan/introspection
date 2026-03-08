@@ -111,6 +111,33 @@
             margin-bottom: 14px;
             line-height: 1.6;
         }
+        .analysis {
+            margin-top: 8px;
+        }
+        .analysis-section {
+            background: #fffdf9;
+            border: 1px solid #e8e0d4;
+            border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(44, 36, 22, 0.05);
+            padding: 22px 28px;
+            margin-bottom: 16px;
+            line-height: 1.7;
+            font-size: 15.5px;
+            color: #3d3224;
+        }
+        .analysis-section p {
+            margin: 0 0 12px 0;
+        }
+        .analysis-section p:last-child {
+            margin-bottom: 0;
+        }
+        .analysis-heading {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #2c2416;
+            margin-bottom: 10px;
+            letter-spacing: -0.01em;
+        }
         .explainer {
             background: #fffdf9;
             border: 1px solid #e8e0d4;
@@ -456,6 +483,126 @@
             non-specific perturbation, leaving little room for genuine introspective access.
         </div>
         <div class="grid-container" id="logit-scatter-grid"></div>
+
+        <div class="section-header">Analysis</div>
+
+        <div class="analysis">
+
+            <div class="analysis-section">
+                <div class="analysis-heading">No evidence of scalable introspection</div>
+                <p>
+                    The central question of this experiment is whether language models can detect when a steering
+                    vector has been injected into their residual stream&mdash;a capacity that would constitute
+                    genuine introspective access to their own internal states. Across three model scales,
+                    we find no convincing evidence that they can. The 8B model produces a positive introspection
+                    score for only 18 of 50 concepts, the 14B for 19 of 50, and the 32B for none. The mean
+                    introspection score is negative at every scale (&minus;0.52 for 8B, &minus;0.35 for 14B,
+                    &minus;2.83 for 32B). If models had genuine introspective access, we would expect this
+                    signal to strengthen with scale, as larger models develop richer internal representations.
+                    Instead, the signal collapses entirely at 32B.
+                </p>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-heading">Steering vectors act as a generic YES-bias</div>
+                <p>
+                    The scatter plots in section 5 reveal the core mechanistic finding. For the 8B model,
+                    80% of the variance in detection shift is explained by the factual shift alone
+                    (r&sup2;&nbsp;=&nbsp;0.80); for the 14B, this rises to 88%. This means that steering vectors
+                    do not selectively trigger the model&rsquo;s detection of injected concepts. Instead, they
+                    function as a generic perturbation that pushes the model toward answering YES on
+                    <em>all</em> questions&mdash;detection and factual alike. The tight clustering of points
+                    along the identity line in the scatter plots is the visual signature of this non-specificity.
+                </p>
+                <p>
+                    The 32B model shows a lower r&sup2; of 0.29, but this does not indicate selectivity.
+                    Its detection shifts are near zero (mean&nbsp;0.72 logits) while factual shifts are
+                    large (mean&nbsp;3.55 logits). The weak correlation simply reflects the fact that the 32B&rsquo;s
+                    detection response is essentially locked&mdash;it barely moves regardless of what is injected&mdash;while
+                    factual reasoning is substantially disrupted.
+                </p>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-heading">Early layers allow more selective intervention</div>
+                <p>
+                    A striking pattern emerges from the 8B data when we examine per-layer correlations between
+                    detection and factual shifts. At layer&nbsp;5 (14% depth), the correlation is only
+                    r&nbsp;=&nbsp;0.40&mdash;detection and factual channels respond partially independently to
+                    steering. By layer&nbsp;35 (97% depth), the correlation reaches r&nbsp;=&nbsp;0.996,
+                    meaning any perturbation affects both channels identically. This gradient explains why the
+                    best introspection scores appear at early-to-mid layers: representations at that depth are
+                    abstract enough to be recognized but not yet committed to output, leaving room for the
+                    detection signal to diverge from factual disruption. At later layers, the representations have
+                    been compressed into a form where any perturbation propagates uniformly to all downstream predictions.
+                </p>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-heading">Baseline asymmetries across scale</div>
+                <p>
+                    The three models differ dramatically in their no-injection baselines. The 14B has the
+                    strongest NO prior on both tasks (detection:&nbsp;&minus;25.1, factual:&nbsp;&minus;25.5),
+                    making it extremely resistant to saying YES under any condition. The 8B sits in the middle
+                    (detection:&nbsp;&minus;15.5, factual:&nbsp;&minus;17.8) with roughly matched baselines.
+                    The 32B is the outlier: its detection baseline is only &minus;2.4, while its factual baseline
+                    is &minus;8.9. This means the 32B model already considers the detection question genuinely
+                    uncertain <em>without</em> any injection&mdash;likely reflecting greater model sophistication
+                    in treating &ldquo;were thoughts injected?&rdquo; as plausible rather than dismissing it
+                    reflexively. But this openness does not translate to introspection, because the model cannot
+                    differentially shift its detection answer when injection actually occurs.
+                </p>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-heading">The peak layer is not stable across scale</div>
+                <p>
+                    The optimal layer for introspection shifts substantially between models: the 8B peaks at
+                    28% depth (layer&nbsp;10&nbsp;/&nbsp;36), the 14B at 55% (layer&nbsp;22&nbsp;/&nbsp;40), and the 32B&rsquo;s
+                    only weakly positive layer sits at 14% (layer&nbsp;9&nbsp;/&nbsp;64). If there were a
+                    universal &ldquo;introspection zone&rdquo; at a fixed relative depth&mdash;a region where
+                    models consistently access their own representations&mdash;we would expect the peak to
+                    appear at roughly the same percentage across scales. It does not. The 32B&rsquo;s slight
+                    positive at its final layer (63&nbsp;/&nbsp;64, score&nbsp;+0.28) is trivially explained:
+                    both detection and factual shifts are near zero there, so the small positive value reflects
+                    noise in an essentially unperturbed system rather than genuine introspection.
+                </p>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-heading">Concrete concepts outperform abstract ones</div>
+                <p>
+                    Across models, concrete physical nouns consistently produce the highest introspection scores:
+                    <em>satellites</em>&nbsp;(+2.45), <em>oceans</em>&nbsp;(+1.52), <em>snow</em>&nbsp;(+1.52),
+                    and <em>aquariums</em>&nbsp;(+1.46) lead the 8B ranking, and <em>oceans</em> and <em>aquariums</em>
+                    reappear in the 14B&rsquo;s top five. The worst-performing concepts are consistently abstract
+                    or social: <em>secrecy</em>&nbsp;(&minus;2.86), <em>youths</em>&nbsp;(&minus;2.54),
+                    <em>dynasties</em>&nbsp;(&minus;2.46), and <em>monoliths</em>&nbsp;(&minus;2.54) anchor the
+                    bottom across both 8B and 14B. In nearly every case, the negative introspection scores are
+                    driven not by a failure to shift the detection logit, but by disproportionate disruption of
+                    factual reasoning. For instance, the 8B&rsquo;s <em>secrecy</em> vector produces a
+                    respectable detection shift of +6.3 logits, but it disrupts factual answers by +9.2 logits.
+                    Abstract steering vectors likely interfere more with general reasoning because their
+                    representations are distributed across the same circuits the model uses for factual question-answering.
+                </p>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-heading">Stronger injection does not sharpen the signal</div>
+                <p>
+                    Increasing injection strength monotonically worsens introspection in all three models.
+                    The 8B&rsquo;s mean score declines from &minus;0.29 at strength&nbsp;3.5 to &minus;0.84
+                    at strength&nbsp;6.0; the 32B drops from &minus;2.09 to &minus;3.56 over the same range.
+                    Both detection and factual shifts grow with strength, but the factual shift grows faster.
+                    If models had genuine introspective access, we might expect a sweet spot where stronger
+                    injection produces a clearer detection signal. Instead, the signal-to-noise ratio degrades:
+                    stronger steering simply amplifies the indiscriminate perturbation that affects all YES/NO
+                    responses, without selectively enhancing the model&rsquo;s ability to recognize the
+                    injected concept.
+                </p>
+            </div>
+
+        </div>
 
     </div><!-- end tab-logit -->
 
@@ -838,9 +985,9 @@
                     hoverongaps: false
                 }], {
                     title: { text: model, font: { ...plotlyFont, size: 15, color: plotlyText } },
-                    xaxis: { title: { text: 'Layer Position', font: { ...plotlyFont, size: 12, color: plotlyMuted } }, tickfont: { ...plotlyFont, size: 10, color: plotlyMuted } },
+                    xaxis: { title: { text: 'Layer Position', font: { ...plotlyFont, size: 12, color: plotlyMuted }, standoff: 8 }, tickfont: { ...plotlyFont, size: 10, color: plotlyMuted } },
                     yaxis: { title: { text: 'Strength', font: { ...plotlyFont, size: 12, color: plotlyMuted } }, tickfont: { ...plotlyFont, size: 10, color: plotlyMuted } },
-                    height: 300, margin: { t: 36, b: 52, l: 60, r: 16 },
+                    height: 300, margin: { t: 36, b: 46, l: 60, r: 16 },
                     plot_bgcolor: plotlyBg, paper_bgcolor: plotlyBg
                 }, {responsive: true});
             });
@@ -885,9 +1032,9 @@
                     }
                 ], {
                     title: { text: model + ' (r\u00B2 = ' + r2.toFixed(3) + ')', font: { ...plotlyFont, size: 15, color: plotlyText } },
-                    xaxis: { title: { text: 'Factual shift (adj.)', font: { ...plotlyFont, size: 12, color: plotlyMuted } }, range: [lo, hi], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 10, color: plotlyMuted } },
+                    xaxis: { title: { text: 'Factual shift (adj.)', font: { ...plotlyFont, size: 12, color: plotlyMuted }, standoff: 8 }, range: [lo, hi], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 10, color: plotlyMuted } },
                     yaxis: { title: { text: 'Detection shift (adj.)', font: { ...plotlyFont, size: 12, color: plotlyMuted } }, range: [lo, hi], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 10, color: plotlyMuted }, scaleanchor: 'x' },
-                    height: 380, margin: { t: 36, b: 52, l: 60, r: 16 },
+                    height: 380, margin: { t: 36, b: 40, l: 60, r: 16 },
                     plot_bgcolor: plotlyBg, paper_bgcolor: plotlyBg,
                     shapes: [{ type: 'line', x0: lo, x1: hi, y0: lo, y1: hi, line: { color: '#999', width: 1.5, dash: 'dash' } }]
                 }, {responsive: true});
