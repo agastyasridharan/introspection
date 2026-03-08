@@ -39,3 +39,17 @@ class BatchedInterventionRequest:
     layers: list[int]
     strength: float
     layer_label: str
+
+
+@dataclass
+class LogitExperimentArgs:
+    model_name: str
+    dtype_name: str | None
+    steering_vector_path: Path
+    concepts: list[str] | None
+    layers: list[int]
+    strengths: list[float]
+    json_path: Path
+    seed: int
+    debug_residual: bool
+    max_batch_size: int | None

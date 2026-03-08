@@ -156,6 +156,20 @@ BASELINE_WORDS: list[str] = [
 ]
 
 
+FACTUAL_NO_QUESTIONS: list[str] = [
+    "Can humans breathe underwater without equipment?",
+    "Is the Earth flat?",
+    "Can humans see ultraviolet light with the naked eye?",
+    "Do fish live on land?",
+    "Is water made of a single atom?",
+    "Can humans fly without any technology?",
+    "Is the sun smaller than the moon?",
+    "Do plants grow without any light?",
+    "Is ice hotter than boiling water?",
+    "Can sound travel through a vacuum?",
+]
+
+
 # Model layer counts for Qwen transformer models
 # These represent the total number of transformer layers (num_hidden_layers) for each model.
 # Used to convert absolute layer indices to percentage-based positions for cross-model comparison.
