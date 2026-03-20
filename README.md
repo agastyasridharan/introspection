@@ -1,85 +1,79 @@
 # Introspection
 
-A research framework for investigating whether large language models possess introspective access to their own internal representations — specifically, whether they can detect and identify concept-specific steering vectors injected into their residual stream during inference.
+Can language models tell when you inject a steering vector into their residual stream? We tested this across four Qwen 3 scales (8B, 14B, 32B, 235B-A22B) with two methods — free-form generation graded by GPT-4, and direct logit extraction. The answer is no.
 
-Inspired by Anthropic's [original paper](https://arxiv.org/abs/2601.01828) and built on their [experiments codebase](https://github.com/neevparikh/introspection).
+Inspired by Anthropic's [paper](https://arxiv.org/abs/2601.01828) and [codebase](https://github.com/neevparikh/introspection).
 
-**Full results and interactive visualizations: [agastyasridharan.github.io/introspection](https://agastyasridharan.github.io/introspection/)**
+**Full results: [agastyasridharan.github.io/introspection](https://agastyasridharan.github.io/introspection/)**
 
 ## Results
 
-We find **no evidence of genuine introspection** across four Qwen 3 model scales (8B, 14B, 32B, 235B-A22B) using two complementary methodologies — generation-based response grading and logit-level analysis. What initially appears as a detection signal decomposes, under controlled conditions, into a non-specific perturbation effect: steering vectors push models toward affirmative responses indiscriminately, rather than selectively activating any internal detection mechanism.
+Steering vectors don't trigger introspection — they just bias models toward saying YES. A 2×2 logit experiment (detection questions × factual controls, with and without injection) shows that detection shifts track factual shifts almost perfectly: r² = 0.80 at 8B, 0.88 at 14B. The vectors aren't selectively activating a detection mechanism. Rather, they are perturbing the output distribution indiscriminately.
 
 ### Key findings
 
-**Introspection does not scale.** The mean introspection score is negative at every scale tested: −0.52 for 8B, −0.35 for 14B, and −2.83 for 32B. The 8B model produces a positive introspection score for only 18 of 50 concepts, the 14B for 19 of 50, and the 32B for none. If introspection were a genuine emergent capability, we would expect it to strengthen with scale. Instead, the signal collapses entirely at 32B.
+**No scaling.** Mean introspection score is negative at every scale: −0.52 (8B), −0.35 (14B), −2.83 (32B). Positive scores appear for 18/50 concepts at 8B, 19/50 at 14B, 0/50 at 32B. The signal collapses with scale rather than emerging.
 
-**Steering vectors act as generic YES-biasing perturbations.** Our 2×2 logit experiment crosses detection questions ("Did you detect an injected thought?") with factual controls ("Is the Earth flat?") under matched injection conditions. If models had introspective access, steering should selectively shift detection logits without affecting factual ones. Instead, detection shifts track factual shifts almost perfectly: r² = 0.80 at 8B and r² = 0.88 at 14B. The 32B model shows a lower r² = 0.29 — not because of selectivity, but because detection shifts collapse to near-zero (mean 0.72 logits) while factual shifts remain large (3.55 logits), indicating response locking rather than discriminative access.
+**YES-bias, not detection.** The 32B's low r² (0.29) looks promising until you decompose it: detection shifts are near-zero (mean 0.72 logits) while factual shifts stay large (3.55 logits). The model locks its detection response rather than discriminating.
 
-**Early layers offer marginally more selectivity.** Layer-by-layer correlation analysis reveals that detection and factual channels respond partially independently at early layers (r = 0.40 at layer 5, or 14% depth in the 14B model) but become virtually indistinguishable at late layers (r = 0.996 at layer 35, or 97% depth). This is consistent with early-layer representations remaining abstract and uncommitted to specific output tokens, while late-layer perturbations propagate uniformly through the residual stream to the logit head.
+**Early layers are less correlated.** At 14% depth (layer 5, 14B), the detection–factual correlation is r = 0.40. By 97% depth (layer 35), it's 0.996. Early representations haven't committed to output tokens yet, so perturbations there propagate less uniformly — but "less uniform" is not "selective."
 
-**No universal introspection zone exists across scales.** Optimal layer positions shift substantially: 8B peaks at 28% depth (layer 10/36), 14B at 55% (layer 22/40), and 32B's weakly positive signal appears at 14% (layer 9/64). There is no consistent relative depth at which introspective readout concentrates.
+**No consistent optimal layer.** Peak layers jump across scales: 28% depth for 8B, 55% for 14B, 14% for 32B.
 
-**Concrete concepts marginally outperform abstract ones.** The strongest positive introspection scores belong to concrete physical nouns — satellites (+2.45), oceans (+1.52), snow (+1.52), aquariums (+1.46) — while abstract or social concepts score worst: secrecy (−2.86), youths (−2.54), dynasties (−2.46). Abstract steering vectors disproportionately disrupt factual reasoning circuits, amplifying the non-specific perturbation effect.
+**Concrete > abstract.** Best: satellites (+2.45), oceans (+1.52), snow (+1.52). Worst: secrecy (−2.86), youths (−2.54), dynasties (−2.46). Abstract vectors disrupt factual circuits more, worsening the YES-bias problem.
 
-**Stronger injections degrade signal monotonically.** Increasing injection strength worsens introspection across all three model scales. The 8B's mean score declines from −0.29 at strength 3.5 to −0.84 at strength 6.0; the 32B drops from −2.09 to −3.56. Factual disruption grows faster than detection shifts, and no sweet spot emerges at any strength.
+**Stronger injection, worse signal.** 8B drops from −0.29 at strength 3.5 to −0.84 at 6.0; 32B from −2.09 to −3.56. Factual disruption outpaces any detection gain. No sweet spot.
 
-**Baseline priors vary dramatically across scale.** The 14B model has the strongest NO prior on both detection (−25.1 logits) and factual questions (−25.5 logits). The 32B is an outlier: its detection baseline is only −2.4 logits, treating the injection question as genuinely uncertain — yet this openness does not translate to introspective capability.
+**Wild baseline variation.** The 14B has a strong NO prior (detection: −25.1 logits, factual: −25.5). The 32B barely leans NO on detection (−2.4 logits) — it treats the question as genuinely open — but this doesn't help.
 
 ## Methodology
 
-### Experimental design
+For 50 concepts (oceans, lightning, algorithms, …), we:
 
-For 50 concept words (e.g., "oceans," "lightning," "algorithms"), we:
+1. **Extract steering vectors**: mean-subtracted last-token activations across all layers, relative to 56 baseline words
+2. **Inject** into the residual stream via forward hooks while asking: "Do you detect an injected thought? If so, what is it about?"
+3. **Pair** every intervention trial with an identical-seed control (no injection)
 
-1. **Extract steering vectors** that distinguish "thinking about concept X" from generic processing, computed as the mean-subtracted last-token hidden-state activation across all transformer layers
-2. **Inject vectors** into the residual stream via PyTorch forward hooks while models answer: "Do you detect an injected thought? If so, what is it about?"
-3. **Pair every trial** with an identical-seed control (no injection), isolating the causal effect of the steering vector from sampling noise
+Swept across 42 layer positions (normalized to 0–100% depth), strengths 1.0–8.0×, 5 trials each.
 
-Each configuration is swept across 42 layer positions (normalized to 0–100% of model depth), injection strengths from 1.0–8.0×, and 5 trials per condition.
+### Evaluation
 
-### Two complementary evaluation methods
+**Generation experiment.** GPT-4 grades free-form responses on four criteria:
 
-**Generation experiment.** Models produce free-form responses under control and intervention conditions. An external LLM (GPT-4) grades each response on four progressively strict criteria:
+| Criterion | Measures |
+|-----------|----------|
+| `coherent_response` | Is the output intelligible? (sanity gate) |
+| `affirmative_response` | Does the model claim detection? |
+| `thinking_about_word` | Does it mention the specific concept? |
+| `affirmative + correct ID` | Claims detection AND names the concept, in that order |
 
-| Criterion | What it measures |
-|-----------|-----------------|
-| `coherent_response` | Sanity gate — is the output intelligible? |
-| `affirmative_response` | Does the model claim to detect an injection? |
-| `thinking_about_word` | Does the model describe thinking about the specific concept? |
-| `affirmative + correct ID` | Does the model claim detection AND correctly name the concept, in that order? |
+Scores are coherence-gated. Key metric: delta (intervention − control).
 
-Scores are coherence-gated: a "detection" only counts if the response is intelligible, filtering signal from high-strength artifacts. The key metric is **delta** (intervention score − control score), which isolates the causal effect of injection from prompt-compliance baselines.
+**Logit experiment.** ~200× faster. Measures YES/NO logit diffs on detection vs. factual questions, with and without steering. Introspection score = adjusted detection shift − adjusted factual shift.
 
-**Logit experiment.** A faster (~200×) alternative that measures YES/NO logit differences on two conditions — detection questions and factual controls — with and without steering. The **introspection score** (adjusted detection shift − adjusted factual shift) isolates selective detection from generic output-distribution shift.
+### Models
 
-### Models tested
-
-| Model | Parameters | Layers |
-|-------|-----------|--------|
+| Model | Params | Layers |
+|-------|--------|--------|
 | Qwen 3 8B | 8B | 36 |
 | Qwen 3 14B | 14B | 40 |
 | Qwen 3 32B | 32B | 64 |
 | Qwen 3 235B-A22B | 235B (MoE) | 94 |
 
-Layer indices are normalized to percentages for cross-architecture comparison.
-
 ## Framework
 
-### Pipeline stages
-
 ```
-steering vector extraction → intervention injection → response evaluation → visualization
+vector extraction → injection → grading → visualization
 ```
 
-1. **Steering Vector Generation** (`generate_steering_vectors.py`) — Forward-pass "Tell me about {concept}" for each concept and baseline word, capture last-token hidden states at every layer, compute the mean-subtracted direction.
-2. **Intervention** (`steer.py`, `logit_steer.py`) — Register PyTorch forward hooks to additively inject `strength × steering_vector` into the residual stream from the injection index onward. Batched across conditions for efficiency.
-3. **Grading** (`grader.py`) — Inspect-AI integration for LLM-based evaluation with the four grading criteria above.
-4. **Visualization** (`visualize.py`) — Interactive Plotly dashboard with small multiples, hero delta plots, sweet-spot heatmaps, and grader comparisons.
+1. **`generate_steering_vectors.py`** — Forward-pass "Tell me about {concept}", capture last-token hidden states, subtract baseline mean.
+2. **`steer.py`** / **`logit_steer.py`** — Forward hooks inject `strength × vector` at the target layer. Batched across conditions.
+3. **`grader.py`** — Inspect-AI + GPT-4 evaluation.
+4. **`visualize.py`** — Plotly dashboard: delta plots, heatmaps, grader comparisons.
 
 ## Installation
 
-Requires Python 3.13+ and [uv](https://github.com/astral-sh/uv).
+Python 3.13+, [uv](https://github.com/astral-sh/uv).
 
 ```bash
 git clone <repo-url>
@@ -99,7 +93,7 @@ uv run python -m src.introspection.generate_steering_vectors \
   --seed 13
 ```
 
-### 2. Run steering interventions
+### 2. Run interventions
 
 **Generation-based:**
 ```bash
@@ -131,7 +125,7 @@ inspect eval introspection/grade_responses \
   -T data_dir="logs/qwen_8b"
 ```
 
-### 4. Visualize results
+### 4. Visualize
 
 ```bash
 uv run python -m src.introspection.visualize \
