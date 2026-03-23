@@ -1,6 +1,6 @@
 # Introspection
 
-Can language models tell when you inject a steering vector into their residual stream? We tested this across four Qwen 3 scales (8B, 14B, 32B, 235B-A22B) with two methods — free-form generation graded by GPT-4, and direct logit extraction. The answer is no.
+Can language models introspectively detect when you inject a steering vector into their residual stream? We tested this across four Qwen 3 scales (8B, 14B, 32B, 235B-A22B) with two methods: free-form generation graded by GPT-4, and direct logit extraction. The answer, according to these results, is no.
 
 Inspired by Anthropic's [paper](https://arxiv.org/abs/2601.01828) and [codebase](https://github.com/neevparikh/introspection).
 
@@ -8,7 +8,7 @@ Inspired by Anthropic's [paper](https://arxiv.org/abs/2601.01828) and [codebase]
 
 ## Results
 
-Steering vectors don't trigger introspection — they just bias models toward saying YES. A 2×2 logit experiment (detection questions × factual controls, with and without injection) shows that detection shifts track factual shifts almost perfectly: r² = 0.80 at 8B, 0.88 at 14B. The vectors aren't selectively activating a detection mechanism. Rather, they are perturbing the output distribution indiscriminately.
+Steering vectors do not trigger introspection: they solely bias models toward saying YES. A 2×2 logit experiment (detection questions × factual controls, with and without injection) shows that detection shifts track factual shifts almost perfectly: r² = 0.80 at 8B, 0.88 at 14B. The vectors aren't selectively activating a detection mechanism. Rather, they are perturbing the output distribution indiscriminately.
 
 ### Key findings
 
