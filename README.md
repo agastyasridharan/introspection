@@ -60,9 +60,6 @@ These results do not prove that no model can introspect. Several limitations con
 - **Model family.** Only Qwen 3 models were tested. Anthropic's positive results were on Claude, and it is possible that Claude's training (or architecture, or scale) enables introspective capabilities that Qwen lacks. A direct comparison on the same model family would be more conclusive.
 - **Steering vector method.** Vectors were extracted using mean-subtracted last-token activations relative to 56 baseline words. Other extraction methods (difference-in-means across many prompts, trained linear probes, PCA on contrastive pairs) might yield cleaner concept directions that are easier for a model to detect.
 - **Baseline word choice.** The 56 baseline words are semantically diverse nouns. If they cluster in activation space, the mean-subtracted vectors could retain significant non-concept-specific components, potentially adding noise that obscures a real signal.
-- **Injection is temporally uniform.** The steering vector is added as a constant to every token position from the injection point onward. Real "thoughts" presumably involve distributed temporal patterns, not a static additive bias.
-- **No MoE-specific analysis.** The 235B model uses mixture-of-experts, and expert routing could interact with residual-stream injection in ways this simple design does not capture.
-- **The logit experiment measures only the first token.** It is possible that introspective signals emerge over multiple tokens of generation rather than at the immediate first-token response. The generation-based experiment addresses this partially, but it relies on GPT-4 grading which introduces its own noise.
 
 ## Methodology
 
