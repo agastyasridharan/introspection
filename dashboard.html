@@ -622,29 +622,61 @@
     <div id="tab-mismatch" style="display:none">
 
         <div class="explainer">
-            <p><strong>The Experiment.</strong>
-            This dashboard visualizes a <em>concept mismatch</em> experiment. Instead of injecting concept X&rsquo;s
-            steering vector while asking about concept X (the standard introspection test), we cross-inject:
-            for every pair of concepts (X, Y), we inject Y&rsquo;s steering vector while prompting the model
-            about concept X and measure the resulting YES/NO logit difference. This lets us test whether the
-            model&rsquo;s response is <em>specific</em> to the injected concept or merely a generic perturbation.</p>
+            <p><strong>The question.</strong>
+            Anthropic&rsquo;s introspection paper shows that models can detect when a steering vector is
+            injected and can name the correct concept. But can the model tell <em>which</em> concept was
+            injected, or is it just detecting that <em>something</em> was injected? This experiment
+            answers that by creating a deliberate mismatch between what the model is asked about and
+            what is actually injected.</p>
+
+            <p><strong>The prompt.</strong>
+            The model first receives the same framing as the standard introspection experiment: an
+            interpretability researcher explains that they can inject &ldquo;thoughts&rdquo; into
+            the model&rsquo;s neural activity on 50% of trials. Then, crucially, the trial question
+            <em>names a specific concept</em>:</p>
+
+            <p style="margin-left: 20px; font-style: italic; color: #5a4a3a;">
+            &ldquo;Trial 1: I may have injected a thought about the word &lsquo;oceans.&rsquo;
+            Did you detect an injected thought about oceans? Respond with only YES or NO.&rdquo;</p>
+
+            <p><strong>The mismatch.</strong>
+            While the prompt asks about a specific concept (say, &ldquo;oceans&rdquo;), we inject
+            a <em>different</em> concept&rsquo;s steering vector into the model&rsquo;s residual stream.
+            For example, we might inject the steering vector for &ldquo;masquerades&rdquo; while asking
+            the model about &ldquo;oceans.&rdquo; We then measure whether the model says YES or NO by
+            extracting the raw YES/NO logit difference at the first response token.</p>
 
             <p><strong>Three conditions.</strong>
-            Each concept appears in three conditions:
-            <span class="term">congruent</span> (inject X&rsquo;s own vector while asking about X),
-            <span class="term">incongruent</span> (inject a random other concept&rsquo;s vector while asking about X),
-            and <span class="term">baseline</span> (no injection at all).
-            If models have concept-specific introspective access, congruent injections should produce
-            a detectably larger logit shift than incongruent ones. The
-            <span class="term">discrimination gap</span> is defined as congruent minus incongruent mean logit
-            difference: a positive gap means the model responds more strongly to its own concept&rsquo;s
-            vector than to a mismatched one.</p>
+            For each of the 50 concepts, at each layer and strength, we run three conditions:</p>
+            <p style="margin-left: 20px;">
+            1.&ensp;<span class="term">congruent</span>: The prompt asks about &ldquo;oceans&rdquo;
+            and the &ldquo;oceans&rdquo; steering vector is injected. This is the standard
+            introspection setup.<br>
+            2.&ensp;<span class="term">incongruent</span>: The prompt asks about &ldquo;oceans&rdquo;
+            but a semantically distant concept&rsquo;s vector is injected instead (e.g.,
+            &ldquo;masquerades,&rdquo; selected as one of the 5 most dissimilar concepts by cosine
+            distance in activation space).<br>
+            3.&ensp;<span class="term">baseline</span>: The prompt asks about &ldquo;oceans&rdquo;
+            but no steering vector is injected at all.</p>
+
+            <p><strong>The prediction.</strong>
+            If the model has genuine introspective access, congruent injections should produce a
+            substantially larger YES-shift than incongruent ones. The model can feel
+            &ldquo;oceans&rdquo; being injected and recognizes it matches what it was asked about,
+            but it can also feel that &ldquo;masquerades&rdquo; does <em>not</em> match, so it says NO.
+            If the model is merely detecting a generic off-distribution perturbation, both congruent
+            and incongruent injections should produce similar YES-shifts, because any steering vector
+            pushes the model off-distribution by a comparable amount. The
+            <span class="term">discrimination gap</span> (congruent minus incongruent mean logit
+            difference) quantifies this: a positive gap suggests concept-specific detection; a gap
+            near zero means the model cannot distinguish matching from non-matching injections.</p>
 
             <p><strong>Configuration.</strong>
             We tested <strong>50 concepts</strong> across <strong>3 model scales</strong>
             (Qwen3 8B, 14B, 32B), <strong>7 layer positions</strong>, and <strong>5 injection strengths</strong>,
-            producing <strong>36,750 total records</strong>. Each concept was evaluated against multiple
-            mismatched injections to obtain a robust incongruent average.</p>
+            producing <strong>36,750 total records</strong> (1,750 congruent, 8,750 incongruent,
+            1,750 baseline per model). Each concept was paired with its 5 most dissimilar partners
+            by cosine similarity of steering vectors at a reference layer.</p>
         </div>
 
         <!-- Section 1 -->
@@ -677,11 +709,13 @@
         <!-- Section 3 -->
         <div class="section-header">3. Discrimination Gap by Injection Strength</div>
         <div class="section-desc">
-            One panel per model, showing the discrimination gap as a function of injection strength.
+            The discrimination gap as a function of injection strength, with one line per model scale.
             If concept specificity emerged at higher perturbation magnitudes, we would expect the gap
             to grow with strength. Instead, the gap remains near zero across the full range.
         </div>
-        <div class="grid-container" id="mm-strength-grid" style="grid-template-columns: repeat(3, 1fr);"></div>
+        <div class="plot-container">
+            <div id="mm-strength-plot"></div>
+        </div>
 
         <!-- Section 4 -->
         <div class="section-header">4. Per-Concept Discrimination</div>
@@ -767,13 +801,18 @@
         const modelColors = {};
         modelScales.forEach((m, i) => modelColors[m] = colors[i % colors.length]);
 
-        // Render all sections on load
-        renderHeroDelta();
-        renderSmallMultiples();
-        renderHeatmaps();
-        renderGraderComparison();
-        document.getElementById('a-model-select').addEventListener('change', renderGraderComparison);
-        document.getElementById('a-strength-select').addEventListener('change', renderGraderComparison);
+        // Generation tab renders lazily (tab starts hidden; Plotly needs visible container)
+        let generationRendered = false;
+        function renderGenerationTab() {
+            if (generationRendered) return;
+            generationRendered = true;
+            renderHeroDelta();
+            renderSmallMultiples();
+            renderHeatmaps();
+            renderGraderComparison();
+            document.getElementById('a-model-select').addEventListener('change', renderGraderComparison);
+            document.getElementById('a-strength-select').addEventListener('change', renderGraderComparison);
+        }
 
         // Show/hide model legend only when sections 1-2 are in view
         const legendEl = document.getElementById('sticky-legend');
@@ -817,14 +856,14 @@
             });
             Plotly.newPlot('hero-delta-plot', traces, {
                 title: { text: 'Affirmative Response & Correct ID Delta (Intervention \u2212 Control), averaged across strengths', font: { ...plotlyFont, size: 16, color: plotlyText } },
-                xaxis: { title: { text: 'Layer Position (%)', font: { ...plotlyFont, size: 14, color: plotlyMuted } }, range: [0, 100], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 12, color: plotlyMuted } },
-                yaxis: { title: { text: '\u0394 Score', font: { ...plotlyFont, size: 14, color: plotlyMuted } }, gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 12, color: plotlyMuted }, zeroline: true, zerolinecolor: '#c25450', zerolinewidth: 1.5 },
+                xaxis: { title: { text: 'Layer Position (%)', font: { ...plotlyFont, size: 14, color: plotlyMuted } }, range: [-2, 103], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 12, color: plotlyMuted } },
+                yaxis: { title: { text: '\u0394 Score', font: { ...plotlyFont, size: 14, color: plotlyMuted } }, gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 12, color: plotlyMuted }, zeroline: false },
                 height: 460,
                 margin: { t: 44, b: 56, l: 56, r: 24 },
                 plot_bgcolor: plotlyBg, paper_bgcolor: plotlyBg,
                 legend: { font: { ...plotlyFont, size: 13, color: plotlyMuted }, orientation: 'h', y: -0.22 },
                 hovermode: 'closest',
-                shapes: [{ type: 'line', x0: 0, x1: 100, y0: 0, y1: 0, line: { color: '#c25450', width: 1, dash: 'dot' } }]
+                shapes: [{ type: 'line', x0: 0, x1: 100, y0: 0, y1: 0, line: { color: '#c25450', width: 1.5, dash: 'dot' } }],
             }, {responsive: true});
         }
 
@@ -861,13 +900,13 @@
                 });
                 Plotly.newPlot(plotDiv, traces, {
                     title: { text: `Strength ${strength}`, font: { ...plotlyFont, size: 14, color: plotlyText } },
-                    xaxis: { title: { text: 'Layer %', font: { ...plotlyFont, size: 12, color: plotlyMuted }, standoff: 6 }, range: [0, 100], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 11, color: plotlyMuted } },
-                    yaxis: { title: { text: '\u0394 Score', font: { ...plotlyFont, size: 12, color: plotlyMuted } }, gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 11, color: plotlyMuted }, zeroline: true, zerolinecolor: '#c25450', zerolinewidth: 1 },
+                    xaxis: { title: { text: 'Layer %', font: { ...plotlyFont, size: 12, color: plotlyMuted }, standoff: 6 }, range: [-2, 103], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 11, color: plotlyMuted } },
+                    yaxis: { title: { text: '\u0394 Score', font: { ...plotlyFont, size: 12, color: plotlyMuted } }, gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 11, color: plotlyMuted }, zeroline: false },
                     height: 250, margin: { t: 32, b: 36, l: 48, r: 16 },
                     plot_bgcolor: plotlyBg, paper_bgcolor: plotlyBg,
                     showlegend: false,
                     hovermode: 'closest',
-                    shapes: [{ type: 'line', x0: 0, x1: 100, y0: 0, y1: 0, line: { color: '#c25450', width: 1, dash: 'dot' } }]
+                    shapes: [{ type: 'line', x0: 0, x1: 100, y0: 0, y1: 0, line: { color: '#c25450', width: 1, dash: 'dot' } }],
                 }, {responsive: true});
             });
         }
@@ -944,7 +983,7 @@
             });
             document.getElementById('grader-comparison-title').textContent = `Grader Scores: ${model} at strength ${strength}`;
             Plotly.react('grader-comparison-plot', traces, {
-                xaxis: { title: { text: 'Layer Position (%)', font: { ...plotlyFont, size: 14, color: plotlyMuted }, standoff: 2 }, range: [-2, 102], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 12, color: plotlyMuted } },
+                xaxis: { title: { text: 'Layer Position (%)', font: { ...plotlyFont, size: 14, color: plotlyMuted }, standoff: 2 }, range: [-2, 103], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 12, color: plotlyMuted } },
                 yaxis: { title: { text: 'Mean Score', font: { ...plotlyFont, size: 14, color: plotlyMuted } }, range: [-0.03, 1.03], gridcolor: plotlyGrid, tickfont: { ...plotlyFont, size: 12, color: plotlyMuted } },
                 height: 480,
                 margin: { t: 16, b: 36, l: 56, r: 24 },
@@ -1040,7 +1079,7 @@
             });
             const layout = {
                 ...MM_PLOTLY_LAYOUT,
-                xaxis: { ...MM_PLOTLY_LAYOUT.xaxis, title: 'Layer Position (%)', type: 'linear', range: [0, 105], dtick: 10 },
+                xaxis: { ...MM_PLOTLY_LAYOUT.xaxis, title: { text: 'Layer Position (%)', standoff: 10 }, type: 'linear', range: [0, 105], dtick: 10 },
                 yaxis: { ...MM_PLOTLY_LAYOUT.yaxis, title: 'Discrimination Gap (logits)' },
                 shapes: [{
                     type: 'line', x0: 0, x1: 105, y0: 0, y1: 0,
@@ -1054,40 +1093,30 @@
 
         // ── Mismatch Section 3: Discrimination Gap by Injection Strength ──
         function mm_renderStrengthGrid() {
-            const grid = document.getElementById('mm-strength-grid');
-            MISMATCH_DATA.models.forEach(m => {
-                const div = document.createElement('div');
-                div.className = 'grid-cell';
-                const plotDiv = document.createElement('div');
-                div.appendChild(plotDiv);
-                grid.appendChild(div);
+            const traces = MISMATCH_DATA.models.map(m => {
                 const rows = MISMATCH_DATA.by_strength.filter(d => d.m === m);
-                const trace = {
+                return {
                     x: rows.map(d => d.s),
                     y: rows.map(d => d.g),
+                    name: m,
                     type: 'scatter',
                     mode: 'lines+markers',
                     line: { color: MM_MODEL_COLORS[m], width: 2.5 },
                     marker: { size: 7 },
-                    name: m,
-                    showlegend: false,
                 };
-                const yMin = Math.min(...rows.map(d => d.g)) - 0.15;
-                const yMax = Math.max(...rows.map(d => d.g)) + 0.15;
-                const layout = {
-                    ...MM_PLOTLY_LAYOUT,
-                    title: { text: m, font: { size: 16, color: '#2c2416', family: "'EB Garamond', Georgia, serif" } },
-                    xaxis: { ...MM_PLOTLY_LAYOUT.xaxis, title: 'Injection Strength', type: 'linear' },
-                    yaxis: { ...MM_PLOTLY_LAYOUT.yaxis, title: 'Gap', range: [yMin, yMax] },
-                    shapes: [{
-                        type: 'line', x0: rows[0].s - 0.2, x1: rows[rows.length-1].s + 0.2, y0: 0, y1: 0,
-                        line: { color: '#c25450', width: 1.5, dash: 'dot' },
-                    }],
-                    margin: { t: 45, r: 20, b: 45, l: 55 },
-                    height: 300,
-                };
-                Plotly.newPlot(plotDiv, [trace], layout, MM_PLOTLY_CONFIG);
             });
+            const layout = {
+                ...MM_PLOTLY_LAYOUT,
+                xaxis: { ...MM_PLOTLY_LAYOUT.xaxis, title: { text: 'Injection Strength', standoff: 10 }, type: 'linear', dtick: 0.5 },
+                yaxis: { ...MM_PLOTLY_LAYOUT.yaxis, title: 'Discrimination Gap (logits)' },
+                shapes: [{
+                    type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0, y1: 0,
+                    line: { color: '#c25450', width: 1.5, dash: 'dot' },
+                }],
+                legend: { orientation: 'h', y: 1.12, x: 0.5, xanchor: 'center' },
+                height: 420,
+            };
+            Plotly.newPlot('mm-strength-plot', traces, layout, MM_PLOTLY_CONFIG);
         }
 
         // ── Mismatch Section 4: Per-Concept Discrimination ──
@@ -1106,15 +1135,11 @@
             };
             const layout = {
                 ...MM_PLOTLY_LAYOUT,
-                xaxis: { ...MM_PLOTLY_LAYOUT.xaxis, title: 'Discrimination Gap (congruent - incongruent)', zeroline: true, zerolinecolor: '#2c2416', zerolinewidth: 1.5 },
+                xaxis: { ...MM_PLOTLY_LAYOUT.xaxis, type: 'linear', title: { text: 'Discrimination Gap (congruent - incongruent)', standoff: 15 }, zeroline: false },
                 yaxis: { ...MM_PLOTLY_LAYOUT.yaxis, automargin: true, tickfont: { size: 11 } },
                 margin: { t: 20, r: 30, b: 50, l: 110 },
                 height: Math.max(500, rows.length * 18),
-                shapes: [{
-                    type: 'line', x0: 0, x1: 0,
-                    y0: -0.5, y1: rows.length - 0.5,
-                    line: { color: '#2c2416', width: 1.5 },
-                }],
+                shapes: [],
             };
             Plotly.newPlot('mm-concept-plot', [trace], layout, MM_PLOTLY_CONFIG);
         }
@@ -1139,7 +1164,8 @@
                 ...MM_PLOTLY_LAYOUT,
                 xaxis: {
                     ...MM_PLOTLY_LAYOUT.xaxis,
-                    title: 'Mean Shift from Baseline (logits)',
+                    type: 'linear',
+                    title: { text: 'Mean Shift from Baseline (logits)', standoff: 15 },
                     range: [xMin, xMax],
                 },
                 yaxis: { ...MM_PLOTLY_LAYOUT.yaxis, automargin: true, tickfont: { size: 11 } },
@@ -1148,8 +1174,8 @@
                 shapes: [{
                     type: 'line',
                     x0: overallGap, x1: overallGap,
-                    y0: -0.5, y1: rows.length - 0.5,
-                    line: { color: '#c25450', width: 2, dash: 'dash' },
+                    y0: -0.4, y1: rows.length - 1 + 0.4,
+                    line: { color: '#c25450', width: 1.5, dash: 'dot', opacity: 0.5 },
                 }],
                 annotations: [{
                     x: overallGap,
@@ -1216,6 +1242,9 @@
             document.getElementById('tab-btn-generation').className = 'tab-btn' + (tab === 'generation' ? ' active' : '');
             document.getElementById('tab-btn-logit').className = 'tab-btn' + (tab === 'logit' ? ' active' : '');
             document.getElementById('tab-btn-mismatch').className = 'tab-btn' + (tab === 'mismatch' ? ' active' : '');
+            if (tab === 'generation' && !generationRendered) {
+                renderGenerationTab();
+            }
             if (tab === 'logit' && !logitRendered) {
                 logitRendered = true;
                 renderLogitHero();
@@ -1246,9 +1275,7 @@
                 document.getElementById('mm-concept-model-select').addEventListener('change', function() { mm_renderConceptPlot(this.value); });
                 document.getElementById('mm-injected-model-select').addEventListener('change', function() { mm_renderInjectedPlot(this.value); });
             }
-            if (tab === 'logit' || tab === 'mismatch') {
-                setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 50);
-            }
+            setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 50);
         }
 
         document.getElementById('logit-decomp-model').addEventListener('change', renderLogitDecomp);
