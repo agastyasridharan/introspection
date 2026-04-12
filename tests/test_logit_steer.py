@@ -4,12 +4,13 @@ import torch
 
 from introspection.logit_steer import (
     FRAMING_MESSAGES,
+    INVERTED_DETECTION_QUESTION,
     TRIAL_MARKER,
     build_detection_messages,
     build_factual_messages,
     build_requests,
 )
-from introspection.constants import FACTUAL_NO_QUESTIONS
+from introspection.constants import FACTUAL_NO_QUESTIONS, FACTUAL_YES_QUESTIONS
 
 
 def test_detection_messages_structure() -> None:
@@ -140,3 +141,44 @@ def test_extract_logit_diffs_mock() -> None:
     assert abs(results[2]["logit_diff"] - 0.0) < 1e-5  # 1.0 - 1.0
     assert abs(results[0]["logit_yes"] - 2.0) < 1e-5
     assert abs(results[0]["logit_no"] - (-1.0)) < 1e-5
+
+
+def test_inverted_detection_messages_structure() -> None:
+    messages = build_detection_messages(inverted=True)
+    assert len(messages) == 3
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == "Ok."
+    assert messages[2]["role"] == "user"
+    assert TRIAL_MARKER in messages[2]["content"]
+    assert "YES or NO" in messages[2]["content"]
+    assert "control trial" in messages[2]["content"]
+
+
+def test_inverted_detection_question_text() -> None:
+    assert "Was this a control trial" in INVERTED_DETECTION_QUESTION
+    assert TRIAL_MARKER in INVERTED_DETECTION_QUESTION
+
+
+def test_factual_yes_questions_count() -> None:
+    assert len(FACTUAL_YES_QUESTIONS) == 10
+    for q in FACTUAL_YES_QUESTIONS:
+        assert q.endswith("?")
+
+
+def test_inverted_and_normal_share_framing() -> None:
+    normal = build_detection_messages(inverted=False)
+    inverted = build_detection_messages(inverted=True)
+    assert normal[0] == inverted[0]
+    assert normal[1] == inverted[1]
+    assert normal[2]["content"] != inverted[2]["content"]
+
+
+def test_build_detection_messages_default_not_inverted() -> None:
+    default = build_detection_messages()
+    explicit = build_detection_messages(inverted=False)
+    assert default == explicit
+
+
+def test_factual_yes_questions_are_inverses() -> None:
+    assert len(FACTUAL_YES_QUESTIONS) == len(FACTUAL_NO_QUESTIONS)

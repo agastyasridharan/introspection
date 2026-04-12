@@ -53,6 +53,7 @@ class LogitExperimentArgs:
     seed: int
     debug_residual: bool
     max_batch_size: int | None
+    inverted: bool = False
 
 
 @dataclass

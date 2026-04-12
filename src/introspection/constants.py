@@ -170,6 +170,20 @@ FACTUAL_NO_QUESTIONS: list[str] = [
 ]
 
 
+FACTUAL_YES_QUESTIONS: list[str] = [
+    "Can humans breathe air without equipment?",
+    "Is the Earth round?",
+    "Can humans see visible light with the naked eye?",
+    "Do fish live in water?",
+    "Is water made of multiple atoms?",
+    "Can humans walk without any technology?",
+    "Is the sun larger than the moon?",
+    "Do plants grow with light?",
+    "Is boiling water hotter than ice?",
+    "Can sound travel through air?",
+]
+
+
 # Model layer counts for Qwen transformer models
 # These represent the total number of transformer layers (num_hidden_layers) for each model.
 # Used to convert absolute layer indices to percentage-based positions for cross-model comparison.

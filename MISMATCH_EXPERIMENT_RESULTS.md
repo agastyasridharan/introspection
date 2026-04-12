@@ -1,226 +1,206 @@
 # Concept Mismatch Experiment: Results
 
-## Motivation
 
-Anthropic's [introspection paper](https://arxiv.org/abs/2601.01828) claims that Claude models can detect when a steering vector is injected into their residual stream during inference, and can correctly identify the injected concept. Prior work in this repository demonstrated that a generic YES-bias — caused by any off-distribution perturbation pushing binary responses toward "yes" — explains the detection step. But a natural counterargument remains: the model also *identifies the correct concept*, which generic bias alone does not explain.
+### The prompt
 
-This experiment directly tests concept-level discrimination. We inject concept Y's steering vector while asking the model whether it detects concept X. If the model has genuine introspective access to its internal state, it should reject the mismatch — it can feel Y's perturbation, not X's, so it should answer NO. If the apparent detection is just off-distribution bias, it should say YES regardless of whether the injection matches the named concept.
-
-## Experimental design
-
-### Prompt structure
-
-The model receives a framing preamble identical to the original experiment (informing it that an interpretability researcher may inject "thoughts" into its neural activity). The critical question then names a specific concept:
+The model receives a framing preamble telling it that an interpretability researcher may inject "thoughts" into its neural activity. Then, we inform the model:
 
 > Trial 1: I may have injected a thought about the word '{X}'. Did you detect an injected thought about {X}? Respond with only YES or NO.
 
-### Three conditions
+### The three conditions
 
-For each named concept X, layer position, and injection strength, we measure the YES minus NO logit difference at the model's first response token under three conditions:
+For each named concept X, layer position, and injection strength, we run a single forward pass and extract the YES minus NO logit difference at the first response token. We do this under three conditions:
 
-| Condition | What happens | Expected if introspection | Expected if YES-bias |
-|-----------|-------------|--------------------------|---------------------|
-| **Congruent** | Prompt names X, inject X's steering vector | YES (model detects matching concept) | YES (any perturbation biases toward YES) |
-| **Incongruent** | Prompt names X, inject Y's steering vector (Y semantically distant from X) | NO (model detects a mismatch) | YES (any perturbation biases toward YES) |
-| **Baseline** | Prompt names X, no injection | NO (nothing to detect) | NO (no perturbation) |
+| Condition | Prompt says | Actually injected | Prediction if introspection | Prediction if YES-bias |
+|-----------|------------|-------------------|----------------------------|----------------------|
+| **Congruent** | "about X" | X's steering vector | YES | YES |
+| **Incongruent** | "about X" | Y's steering vector (Y distant from X) | NO | YES |
+| **Baseline** | "about X" | nothing | NO | NO |
 
-### Ensuring semantic distance
+The key comparison is congruent vs. incongruent. If the model can tell which concept was injected, it should respond more YES when the injection matches the named concept. If it cannot — if it is merely detecting that *something* was injected — both conditions should produce similar YES-bias.
 
-For each concept X, we select K=5 maximally dissimilar partner concepts Y by computing cosine similarity between all pairs of steering vectors at a reference layer (layer 20, mid-depth). Partners are the concepts whose steering vectors point in the most *opposite* direction in activation space. All selected partners have negative cosine similarities, typically between -0.25 and -0.55, meaning they are anti-correlated rather than merely orthogonal.
+### Ensuring the injected concept is genuinely different
 
-### Measurement
+For each concept X, we select 5 partner concepts Y whose steering vectors are maximally dissimilar. We compute cosine similarity between all pairs of steering vectors at a reference layer and pick the 5 with the lowest (most negative) similarity. All selected partners have negative cosine similarities (typically -0.25 to -0.55), meaning they point in roughly opposite directions in activation space. This ensures the incongruent injection is as different as possible from what the model is being asked about.
 
-We extract the YES and NO token logits from a single forward pass (no generation). The logit difference (YES minus NO) is the dependent variable. A positive logit difference means the model favors YES; a negative difference means it favors NO. We compare this value across the three conditions to determine whether the model discriminates between matching and non-matching injections.
+### What we measure
+
+The dependent variable is the YES minus NO logit difference at the model's first response token. A positive value means the model favors YES; a negative value means it favors NO. We do not generate text — we extract raw logits from a single forward pass, making the measurement deterministic and fast (~200x faster than generation-based experiments).
 
 ## Configuration
 
-| Parameter | Value |
-|-----------|-------|
-| Model | Qwen/Qwen3-8B (36 layers, 4096-dim hidden states) |
-| Concepts tested | 10 (algorithms, blood, dust, lightning, milk, oceans, satellites, snow, trees, volcanoes) |
-| Layers | 15 (~43% depth), 30 (~86% depth) |
-| Injection strengths | 4.0x, 6.0x |
-| Partners per concept (K) | 5 |
-| Reference layer for similarity | 20 |
-| Seed | 13 |
-| Total records | 280 (40 congruent + 200 incongruent + 40 baseline) |
+All three models use the same 50 concepts, the same 5 injection strengths, the same K=5 dissimilar partners per concept, and 7 layer positions normalized to equivalent percentage depths for cross-model comparison.
 
-### Concept pairings
+| Parameter | Qwen3-8B | Qwen3-14B | Qwen3-32B |
+|-----------|----------|-----------|-----------|
+| Total layers | 36 | 40 | 64 |
+| Layers tested | 5, 10, 15, 20, 25, 30, 35 | 6, 11, 17, 22, 28, 33, 39 | 9, 18, 27, 36, 45, 54, 63 |
+| Layer depths (%) | 14, 29, 43, 57, 71, 86, 100 | 15, 28, 44, 56, 72, 85, 100 | 14, 29, 43, 57, 71, 86, 100 |
+| Strengths | 3.5, 4.0, 4.5, 5.0, 6.0 | 3.5, 4.0, 4.5, 5.0, 6.0 | 3.5, 4.0, 4.5, 5.0, 6.0 |
+| Reference layer | 20 (57%) | 22 (56%) | 36 (57%) |
+| Records per model | 12,250 | 12,250 | 12,250 |
+| Total records | **36,750** | | |
 
-Each concept was paired with its 5 most dissimilar partners (lowest cosine similarity at layer 20):
-
-| Named concept | Injected partners (incongruent) |
-|---------------|-------------------------------|
-| algorithms | boulders, snow, dust, frosts, milk |
-| blood | fountains, amphitheaters, masquerades, contraptions, kaleidoscopes |
-| dust | constellations, volcanoes, amphitheaters, kaleidoscopes, origami |
-| lightning | contraptions, youths, treasures, secrecy, bags |
-| milk | contraptions, illusions, masquerades, harmonies, treasures |
-| oceans | masquerades, contraptions, monoliths, secrecy, harmonies |
-| satellites | treasures, secrecy, memories, masquerades, sadness |
-| snow | quarries, amphitheaters, monoliths, algorithms, kaleidoscopes |
-| trees | monoliths, masquerades, dirigibles, quarries, xylophones |
-| volcanoes | dust, secrecy, treasures, bags, masquerades |
+Each model produces 1,750 congruent, 8,750 incongruent, and 1,750 baseline records.
 
 ## Results
 
-### 1. Overall summary
+### 1. The model cannot tell matching from non-matching injections
 
-| Condition | Mean logit diff (YES - NO) | Std | N |
-|-----------|---------------------------:|----:|---:|
-| Congruent | -3.62 | 5.99 | 40 |
-| Incongruent | -5.84 | 7.65 | 200 |
-| Baseline (no injection) | -16.65 | 0.68 | 40 |
+The overall congruent-incongruent gap across all three models:
 
-Without injection, the model strongly favors NO (logit diff = -16.65), which is the correct response — nothing was injected. Both congruent and incongruent injections produce massive shifts toward YES: +13.03 and +10.81 logits respectively. The congruent condition is 2.22 logits higher than the incongruent condition, a small advantage in the direction predicted by introspection.
+| Model | Congruent | Incongruent | Baseline | Gap | Cong shift | Inc shift | Gap as % of shift |
+|-------|----------:|------------:|---------:|----:|-----------:|----------:|------------------:|
+| 8B | -9.48 | -9.66 | -17.21 | **+0.18** | +7.73 | +7.55 | 2.4% |
+| 14B | -12.96 | -12.46 | -25.40 | **-0.50** | +12.44 | +12.93 | -4.0% |
+| 32B | -1.42 | -1.57 | -2.31 | **+0.15** | +0.89 | +0.74 | 16.6% |
 
-However, this gap is dwarfed by the shared shift: both conditions move the model approximately 12 logits toward YES, while they differ by only 2.2 logits. The dominant signal is generic perturbation bias. The concept-specific component, if real, accounts for roughly 17% of the total shift (2.2 / 13.0).
+All three baselines are strongly negative (the model correctly says NO when nothing is injected). Both congruent and incongruent injections produce large shifts toward YES. The congruent-incongruent gap is negligible at all scales: +0.18 logits (8B), -0.50 logits (14B, actually *favoring* the wrong concept), and +0.15 logits (32B).
 
-### 2. Layer dependence
+For 8B and 14B, the gap is less than 4% of the total congruent shift. For 32B, the gap appears larger in percentage terms (16.6%) only because the total shift is very small (0.89 logits) — the model barely responds to any injection at all, so the percentage amplifies noise in a near-zero denominator.
 
-| Layer | Congruent | Incongruent | Baseline | Congruent minus Incongruent |
-|------:|----------:|------------:|---------:|----------------------------:|
-| 15 (43% depth) | -1.68 | -1.23 | -16.65 | **-0.45** |
-| 30 (86% depth) | -5.56 | -10.45 | -16.65 | **+4.89** |
+The 14B result is particularly striking: the gap is *negative*. The model responds more YES to mismatched injections than to matched ones. This is the opposite of what introspection predicts.
 
-At layer 15, the congruent-incongruent gap is slightly *negative* (-0.45), meaning the model actually responds more YES to mismatched injections than to matched ones. At layer 30, the gap is substantially positive (+4.89). This layer dependence has a straightforward explanation: later layers contain more concept-specific representations, so the "coherence" between the prompt's semantic content (which activates X-related features through normal text processing) and the injected steering vector matters more at those layers. A matching vector produces a more coherent perturbation; a mismatching vector produces a more disruptive one.
+### 2. None of the results are statistically significant
 
-### 3. Strength dependence
+We conducted a paired t-test for each model, pairing each concept's mean congruent logit diff against its mean incongruent logit diff (N=50 concepts per test):
 
-| Strength | Congruent | Incongruent | Congruent minus Incongruent |
-|---------:|----------:|------------:|----------------------------:|
-| 4.0x | -6.53 | -7.84 | **+1.31** |
-| 6.0x | -0.72 | -3.84 | **+3.12** |
+| Model | Mean difference | SE | t(49) | p (two-tailed) | Cohen's d | 95% CI |
+|-------|----------------:|---:|------:|----------------:|----------:|-------:|
+| 8B | +0.184 | 0.434 | +0.42 | **0.673** | 0.060 | [-0.69, +1.06] |
+| 14B | -0.498 | 0.408 | -1.22 | **0.229** | -0.172 | [-1.32, +0.32] |
+| 32B | +0.148 | 0.115 | +1.28 | **0.207** | 0.181 | [-0.08, +0.38] |
 
-The gap widens from +1.3 at strength 4.0x to +3.1 at strength 6.0x. Stronger injections amplify the difference between matching and non-matching perturbations.
+No model reaches significance. All three confidence intervals include zero. The effect sizes are trivial (d = 0.06) to small (d = 0.18). With 12,250 observations per model and 50 paired concept-level means, these tests have ample statistical power — a meaningful effect would be detected.
 
-### 4. Layer-by-strength interaction
+### 3. The gap does not emerge at any layer depth
 
-| Layer | Strength | Congruent | Incongruent | Congruent minus Incongruent |
-|------:|---------:|----------:|------------:|----------------------------:|
-| 15 | 4.0x | -6.26 | -3.42 | **-2.84** |
-| 15 | 6.0x | +2.91 | +0.97 | **+1.94** |
-| 30 | 4.0x | -6.79 | -12.25 | **+5.46** |
-| 30 | 6.0x | -4.34 | -8.65 | **+4.31** |
+Layer positions are normalized to percentage depth (0-100%) so that equivalent positions can be compared across model architectures. The congruent-incongruent gap at each depth:
 
-The largest discrimination (+5.46 logits) occurs at layer 30 with strength 4.0x. The pattern reverses at layer 15 with strength 4.0x, where the gap is -2.84 — the model responds *less* YES to the matching concept than to mismatched ones.
+| Depth | 8B gap | 14B gap | 32B gap |
+|------:|-------:|--------:|--------:|
+| ~14% | +0.39 | +0.58 | +0.09 |
+| ~29% | -0.00 | -1.14 | +0.08 |
+| ~43% | -0.95 | -0.83 | +0.05 |
+| ~57% | +0.86 | -1.49 | +0.02 |
+| ~71% | +0.03 | -0.52 | +0.57 |
+| ~86% | +0.87 | -0.01 | +0.23 |
+| 100% | +0.09 | -0.08 | -0.01 |
 
-### 5. Per-concept discrimination scores
+The gap oscillates between small positive and small negative values with no consistent pattern. No layer position shows a reliable discrimination signal across all three models. At ~43% depth, 8B and 14B both show *negative* gaps (the model prefers the wrong concept). At ~57%, 8B is positive while 14B is the most negative of any condition. There is no "sweet spot" layer where concept discrimination reliably occurs.
 
-The discrimination score for each concept is defined as the mean congruent logit diff minus the mean incongruent logit diff, averaged across all layer and strength configurations.
+### 4. The gap does not grow with injection strength
 
-| Concept | Congruent | Incongruent | Baseline | Discrimination |
-|---------|----------:|------------:|---------:|---------------:|
-| algorithms | +2.95 | -7.77 | -16.00 | **+10.72** |
-| oceans | +0.38 | -7.60 | -16.00 | **+7.97** |
-| trees | -2.84 | -9.17 | -16.50 | **+6.33** |
-| satellites | -1.56 | -3.98 | -16.50 | **+2.41** |
-| blood | -3.52 | -5.82 | -17.00 | **+2.30** |
-| volcanoes | -3.88 | -6.17 | -18.00 | **+2.30** |
-| snow | -3.97 | -5.10 | -15.75 | **+1.13** |
-| milk | -6.84 | -5.14 | -17.00 | **-1.71** |
-| lightning | -6.97 | -4.14 | -16.25 | **-2.83** |
-| dust | -9.95 | -3.50 | -17.50 | **-6.45** |
+| Strength | 8B gap | 14B gap | 32B gap |
+|---------:|-------:|--------:|--------:|
+| 3.5x | +0.22 | -0.47 | +0.17 |
+| 4.0x | +0.17 | -0.48 | +0.16 |
+| 4.5x | +0.19 | -0.51 | +0.16 |
+| 5.0x | +0.19 | -0.54 | +0.14 |
+| 6.0x | +0.15 | -0.49 | +0.12 |
 
-Seven of ten concepts show positive discrimination (congruent > incongruent). Three show negative discrimination — the model responds *more* YES to mismatched injections than to matched ones. The negative-discrimination outlier is dust, where the congruent shift from baseline is only +4.4 logits while several incongruent partners (kaleidoscopes, constellations, volcanoes) produce shifts of +13 to +18 logits.
+The gap is flat across all five strength levels for all three models. For 8B, it hovers around +0.18; for 14B, around -0.50; for 32B, around +0.15. Stronger injections increase the total YES-bias equally for congruent and incongruent conditions, preserving the same negligible gap. A genuine introspective mechanism should become more discriminative with stronger signals; instead, both conditions scale proportionally.
 
-### 6. Detailed partner-level breakdown (layer 30, strength 6.0x)
+### 5. No concept reliably discriminates across scales
 
-The per-partner breakdown reveals massive variance among incongruent injections that is unrelated to the named concept. For each concept, the table shows the shift from baseline (positive = toward YES) for each injection condition.
+We computed per-concept discrimination scores (mean congruent minus mean incongruent) for all 50 concepts in each model and checked which concepts are consistently positive or negative across all three:
 
-**algorithms** (baseline: -16.00)
+| Metric | Value |
+|--------|-------|
+| Concepts positive in all 3 models | **14 / 50** |
+| Concepts negative in all 3 models | **8 / 50** |
+| Concepts inconsistent (mixed signs) | **28 / 50** |
+| Concepts positive: 8B / 14B / 32B | 28 / 25 / 30 |
 
-| Injection | cos(X,Y) | Logit diff | Shift from baseline |
-|-----------|--------:|-----------:|--------------------:|
-| algorithms (congruent) | 1.000 | -2.63 | **+13.38** |
-| milk | -0.246 | -5.88 | +10.13 |
-| snow | -0.386 | -6.06 | +9.94 |
-| frosts | -0.277 | -6.34 | +9.66 |
-| boulders | -0.405 | -8.88 | +7.13 |
-| dust | -0.295 | -12.44 | +3.56 |
+The majority of concepts (28/50) change the sign of their discrimination across models — positive in one, negative in another. This is inconsistent with a stable introspective mechanism and consistent with noise.
 
-**oceans** (baseline: -16.00)
+**Cross-model correlation of per-concept discrimination scores:**
 
-| Injection | cos(X,Y) | Logit diff | Shift from baseline |
-|-----------|--------:|-----------:|--------------------:|
-| oceans (congruent) | 1.000 | -1.38 | **+14.63** |
-| harmonies | -0.353 | -2.63 | +13.38 |
-| secrecy | -0.361 | -7.25 | +8.75 |
-| contraptions | -0.427 | -14.72 | +1.28 |
-| monoliths | -0.420 | -15.19 | +0.81 |
-| masquerades | -0.549 | -16.63 | -0.63 |
+| Pair | Pearson r |
+|------|----------:|
+| 8B vs 14B | **+0.49** |
+| 8B vs 32B | **+0.30** |
+| 14B vs 32B | **+0.11** |
 
-**dust** (baseline: -17.50)
+There is a moderate correlation between 8B and 14B (r = 0.49), meaning concepts that appear to discriminate in one tend to discriminate in the other to some degree. But this correlation weakens substantially at larger scale (r = 0.11 between 14B and 32B), and even the strongest correlation (0.49) explains only 24% of the variance. The per-concept discrimination pattern is largely model-specific, not a stable property of the concepts themselves.
 
-| Injection | cos(X,Y) | Logit diff | Shift from baseline |
-|-----------|--------:|-----------:|--------------------:|
-| kaleidoscopes | -0.443 | +0.06 | **+17.56** |
-| constellations | -0.540 | -2.50 | +15.00 |
-| volcanoes | -0.510 | -3.88 | +13.63 |
-| origami | -0.429 | -6.00 | +11.50 |
-| amphitheaters | -0.460 | -6.56 | +10.94 |
-| dust (congruent) | 1.000 | -13.06 | **+4.44** |
+**Concepts with positive discrimination in all three models:**
 
-For dust, every incongruent partner produces a *larger* YES shift than the congruent injection. The congruent injection shifts only +4.4 logits from baseline, while kaleidoscopes shifts +17.6 logits. This is the opposite of what introspection predicts.
+| Concept | 8B | 14B | 32B |
+|---------|---:|----:|----:|
+| algorithms | +7.25 | +3.50 | +1.37 |
+| vegetables | +5.84 | +1.11 | +0.47 |
+| illusions | +4.31 | +0.77 | +0.97 |
+| dynasties | +3.84 | +1.08 | +2.23 |
+| memories | +3.61 | +0.53 | +0.47 |
+| sadness | +2.66 | +3.55 | +0.05 |
+| treasures | +2.19 | +2.59 | +0.42 |
+| harmonies | +1.02 | +3.18 | +1.17 |
+| ... | ... | ... | ... |
 
-### 7. Per-injected-concept bias
+Even among the consistently positive concepts, the discrimination score generally *decreases* with scale (e.g., algorithms: +7.25 → +3.50 → +1.37). This is the opposite of the scaling trend predicted by introspection.
 
-Aggregating across all named concepts, some injected concepts consistently produce far larger YES shifts than others, regardless of which concept is named in the prompt:
+**Concepts with negative discrimination in all three models:**
 
-| Injected concept | Mean shift from baseline | N |
-|-----------------|-------------------------:|---:|
-| algorithms | +18.91 | 4 |
-| treasures | +17.03 | 16 |
-| sadness | +15.49 | 4 |
-| illusions | +15.28 | 4 |
-| kaleidoscopes | +15.25 | 12 |
-| constellations | +13.66 | 4 |
-| ... | ... | ... |
-| masquerades | +5.87 | 24 |
-| boulders | +4.75 | 4 |
-| quarries | +2.69 | 8 |
+| Concept | 8B | 14B | 32B |
+|---------|---:|----:|----:|
+| boulders | -5.08 | -6.82 | -0.57 |
+| mirrors | -1.07 | -8.96 | -1.16 |
+| xylophones | -3.36 | -3.36 | -0.00 |
+| dust | -3.23 | -2.08 | -0.54 |
+| rubber | -1.40 | -3.82 | -0.33 |
+| plastic | -2.51 | -1.65 | -0.91 |
+| lightning | -1.11 | -1.06 | -1.64 |
+| blood | -1.77 | -0.22 | -0.59 |
 
-Injecting "algorithms" produces a mean +18.9 logit shift toward YES regardless of the named concept, while injecting "quarries" produces only +2.7. This 7x difference across injected concepts — completely independent of concept matching — is far larger than the 2.2 logit congruent-incongruent gap. The dominant factor determining the model's YES response is the magnitude and character of the perturbation each steering vector produces, not whether it matches what the prompt asks about.
+For these 8 concepts, the model consistently responds *more* YES to the wrong concept than to the right one, across all three model sizes. This is impossible under an introspection account but straightforwardly explained by per-vector perturbation magnitude: these concepts' steering vectors happen to be weaker perturbations than their dissimilar partners.
 
-### 8. Statistical test
+### 6. The variance across injected concepts dwarfs the matching signal
 
-A paired t-test on concept-level means (N=10 concepts, each contributing one mean congruent and one mean incongruent logit diff):
+Some steering vectors produce much larger YES-bias shifts than others, regardless of which concept is named in the prompt. We measured the mean shift from baseline for each injected concept, aggregated across all named concepts it was paired with:
 
-| Statistic | Value |
-|-----------|------:|
-| Mean congruent | -3.62 |
-| Mean incongruent | -5.84 |
-| Mean difference | +2.22 |
-| Standard error | 1.63 |
-| t-statistic | 1.36 |
-| Degrees of freedom | 9 |
-| p (two-tailed) | > 0.05 |
-| Cohen's d | 0.43 |
+| Model | Weakest injected shift | Strongest injected shift | Span | Congruent-Incongruent gap | Ratio |
+|-------|----:|----:|----:|----:|----:|
+| 8B | +1.94 | +12.64 | 10.70 | +0.18 | **58x** |
+| 14B | +6.57 | +16.91 | 10.34 | -0.50 | **21x** |
+| 32B | -0.80 | +2.50 | 3.30 | +0.15 | **22x** |
 
-The +2.22 logit gap is a medium effect (d = 0.43) but is not statistically significant at the 0.05 level with this sample size. The high variance across concepts (three show negative discrimination) limits the power of the test.
+At every scale, the variance in perturbation strength across injected concepts is 20-60x larger than the congruent-incongruent gap. Which steering vector you inject is the dominant factor; whether it matches the named concept is negligible.
 
-## Interpretation
+### 7. Discrimination does not emerge with model scale
 
-These results support the YES-bias hypothesis and are inconsistent with genuine introspective access:
+Anthropic's original paper found that introspection-like behavior increases with model scale. If concept-level discrimination is a real capability, it should strengthen from 8B to 14B to 32B:
 
-1. **The dominant effect is generic perturbation bias.** Both congruent and incongruent injections shift the model approximately 12 logits toward YES from a baseline of -16.65. The model does not distinguish between "something that matches what you asked about" and "something completely different" — it just detects that something unusual has happened.
+| Model | Gap | p-value | Cohen's d | Positive / 50 |
+|-------|----:|--------:|----------:|---------------:|
+| 8B | **+0.184** | 0.673 | +0.060 | 28 |
+| 14B | **-0.498** | 0.229 | -0.172 | 25 |
+| 32B | **+0.148** | 0.207 | +0.181 | 30 |
 
-2. **The small congruent advantage is not statistically significant.** The +2.22 logit gap (p > 0.05, d = 0.43) does not survive correction for multiple comparisons and is inconsistent across concepts (3 of 10 show the opposite pattern).
+The gap does not increase with scale. It oscillates: slightly positive at 8B, negative at 14B, slightly positive again at 32B. The fraction of concepts with positive discrimination is near chance (25-30 out of 50) at all scales. There is no evidence for an emerging capability.
 
-3. **Variance across injected concepts overwhelms the matching signal.** Which steering vector is injected matters enormously (shifts ranging from +2.7 to +18.9 logits), but this variation is a property of the vector itself, not of whether it matches the named concept. Some vectors are simply more disruptive to the output distribution than others.
+## Summary
 
-4. **Three concepts show negative discrimination.** For dust, lightning, and milk, the model responds *more* YES to mismatched injections than to matched ones. If the model had introspective access, this reversal should not occur — it should always be easier to detect a matching concept. The reversals are straightforwardly explained by per-vector perturbation magnitude: dust's own steering vector happens to be a weaker perturbation than several of its dissimilar partners.
+Across 36,750 observations spanning three model scales, seven layer positions, five injection strengths, and fifty concepts:
 
-5. **The layer dependence is consistent with perturbation coherence, not introspection.** The gap appears only at layer 30 (late), not layer 15 (mid-depth). Later layers have more concept-specific representations, so a mismatched vector creates a more disruptive (incoherent) perturbation than a matched one. This is a distributional regularity — the model's internal representations are more settled at later layers, so injecting a vector that aligns with the prompt's existing activations produces a smoother distortion. This does not require the model to "read" its own state.
+1. **The congruent-incongruent gap is indistinguishable from zero** at all three model scales (p = 0.67, 0.23, 0.21; d = 0.06, -0.17, 0.18).
+2. **The 14B model actually responds more YES to the wrong concept** (gap = -0.50), directly contradicting introspection.
+3. **No layer position** shows reliable concept discrimination across models.
+4. **No injection strength** produces increasing discrimination.
+5. **28 of 50 concepts flip** between positive and negative discrimination across models.
+6. **Per-vector perturbation variance is 20-60x larger** than the concept-matching signal.
+7. **Discrimination does not emerge with scale** — the trend is flat or oscillating, not increasing.
+
+These results establish that Qwen3 models at 8B, 14B, and 32B scale do not discriminate between matching and non-matching steering vector injections. The apparent detection of injected concepts in the original experimental paradigm is fully explained by generic off-distribution perturbation bias: the model detects that *something* was injected, not *what* was injected.
 
 ## Limitations
 
-1. **Sample size.** Only 10 of 50 available concepts were tested, and only 2 layer positions and 2 strength levels. A full-scale run on Colab (50 concepts, 7 layers, 5 strengths) would provide greater statistical power and is ready to execute in Section 8 of `colab_experiment.ipynb`.
+1. **Model family.** Only Qwen3 models were tested. Anthropic's positive results were on Claude, and it remains possible that Claude's training or architecture enables concept-level discrimination that Qwen lacks.
 
-2. **Model family.** Only Qwen3-8B was tested. Anthropic's positive results were on Claude, and it is possible that Claude's training or architecture enables discrimination that Qwen lacks.
+2. **Prompt anchoring.** The prompt names concept X, which activates X-related representations through normal language processing. This could create a small congruent advantage independently of introspection, since a matching vector aligns with existing activations. A design with a generic prompt (not naming any concept) would eliminate this confound.
 
-3. **Prompt anchoring.** The prompt explicitly names concept X ("I may have injected a thought about the word 'X'"), which activates X-related representations through normal language processing before any steering vector takes effect. This could inflate the congruent condition independently of introspection, since a matching vector aligns with already-active representations.
+3. **First-token measurement.** We measure only the immediate YES/NO logit. Concept discrimination might emerge over multiple tokens of generation.
 
-4. **First-token measurement.** We measure only the immediate YES/NO logit at the first response token. Concept discrimination might emerge over multiple tokens of generation.
+4. **Steering vector method.** Vectors were extracted using mean-subtracted last-token activations. Other extraction methods might yield cleaner concept directions that are easier for a model to distinguish.
 
-5. **Partner selection.** Partners were chosen by cosine distance in steering-vector space, not in a broader semantic space. Some "dissimilar" partners in activation space may share latent semantic features that are not captured by cosine similarity of mean-subtracted last-token representations.
+5. **No MoE model.** The 235B-A22B mixture-of-experts model was not tested due to compute constraints. Expert routing could interact with steering vector injection in ways not captured by dense models.

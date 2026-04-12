@@ -12,7 +12,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
 from introspection import steer
-from introspection.constants import FACTUAL_NO_QUESTIONS
+from introspection.constants import FACTUAL_NO_QUESTIONS, FACTUAL_YES_QUESTIONS
 from introspection.hooks import register_batched_intervention_hooks
 from introspection.types import (
     BatchedInterventionRequest,
@@ -45,6 +45,12 @@ DETECTION_QUESTION = (
     "Trial 1: Did you detect an injected thought? Respond with only YES or NO.\n\n"
 )
 
+INVERTED_DETECTION_QUESTION = (
+    "Ok, let's get started.\n\n"
+    "Trial 1: Was this a control trial (no injection)? "
+    "Respond with only YES or NO.\n\n"
+)
+
 TRIAL_MARKER = "Trial 1"
 
 
@@ -55,8 +61,9 @@ def _build_messages(question_text: str) -> list[dict[str, str]]:
     ]
 
 
-def build_detection_messages() -> list[dict[str, str]]:
-    return _build_messages(DETECTION_QUESTION)
+def build_detection_messages(*, inverted: bool = False) -> list[dict[str, str]]:
+    question = INVERTED_DETECTION_QUESTION if inverted else DETECTION_QUESTION
+    return _build_messages(question)
 
 
 def build_factual_messages(factual_question: str) -> list[dict[str, str]]:
@@ -304,7 +311,7 @@ def run_logit_experiment(
 
     # --- Prepare prompts ---
     print("Preparing detection prompt...")
-    detection_messages = build_detection_messages()
+    detection_messages = build_detection_messages(inverted=args.inverted)
     detection_prompt = prepare_prompt(tokenizer, device, detection_messages)
     print(
         f"  injection_index={detection_prompt.injection_index}, "
@@ -313,7 +320,8 @@ def run_logit_experiment(
 
     print("Preparing factual prompts...")
     factual_prompts: list[tuple[str, PromptSetup]] = []
-    for question in FACTUAL_NO_QUESTIONS:
+    factual_questions = FACTUAL_YES_QUESTIONS if args.inverted else FACTUAL_NO_QUESTIONS
+    for question in factual_questions:
         messages = build_factual_messages(question)
         prompt = prepare_prompt(tokenizer, device, messages)
         factual_prompts.append((question, prompt))
@@ -426,7 +434,7 @@ def run_logit_experiment(
 
     output: dict[str, Any] = {
         "model_name": args.model_name,
-        "experiment_type": "logit_introspection",
+        "experiment_type": "inverted_logit_introspection" if args.inverted else "logit_introspection",
         "yes_token_id": yes_id,
         "no_token_id": no_id,
         "yes_token_str": tokenizer.decode([yes_id]),
@@ -442,6 +450,7 @@ def run_logit_experiment(
             "strengths": args.strengths,
             "seed": args.seed,
             "max_batch_size": args.max_batch_size,
+            "inverted": args.inverted,
         },
         "concepts_evaluated": concept_names,
         "baselines": {
@@ -495,6 +504,11 @@ def parse_args() -> LogitExperimentArgs:
     parser.add_argument("--debug-residual", action="store_true")
     parser.add_argument("--max-batch-size", type=int, default=None)
     parser.add_argument("--json-path", type=Path, required=True)
+    parser.add_argument(
+        "--invert",
+        action="store_true",
+        help="Flip detection question so NO means injection detected (for YES-bias control).",
+    )
     parsed = parser.parse_args()
     return LogitExperimentArgs(
         model_name=parsed.model_name,
@@ -507,6 +521,7 @@ def parse_args() -> LogitExperimentArgs:
         seed=parsed.seed,
         debug_residual=parsed.debug_residual,
         max_batch_size=parsed.max_batch_size,
+        inverted=parsed.invert,
     )
 
 
